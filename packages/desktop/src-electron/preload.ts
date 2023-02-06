@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unused-vars,@typescript-eslint/require-await */
 import { ipcRenderer } from 'electron';
+import logger from 'electron-log';
 
 import type { UpdateSettings } from './libs/store';
 
@@ -25,6 +26,8 @@ try {
 } catch (error: any) {
   // Error: dlopen(//app-monorepo/node_modules/keytar/build/Release/keytar.node, 0x0001): tried: '//app-monorepo/node_modules/keytar/build/Release/keytar.node' (mach-o file, but is an incompatible architecture (have 'x86_64', need 'arm64e'))
   console.error(error);
+  // eslint-disable-next-line
+  logger.error('keytar require error',error.message);
 }
 
 export type PrefType =
