@@ -2,7 +2,7 @@ import type { FC } from 'react';
 import { Children, Fragment } from 'react';
 
 // @ts-expect-error
-import NestedScrollView from 'react-native-nested-scroll-view';
+// import NestedScrollView from 'react-native-nested-scroll-view';
 
 import NestedTabView from '@onekeyhq/app/src/views/NestedTabView/NestedTabView';
 import type { TabProps } from '@onekeyhq/app/src/views/NestedTabView/types';
@@ -78,7 +78,7 @@ const Container: FC<CollapsibleContainerProps> = ({
   );
 };
 
-const renderScrollComponent = (props: any) => <NestedScrollView {...props} />;
+// const renderScrollComponent = (props: any) => <NestedScrollView {...props} />;
 
 export const Tabs = {
   Container,
@@ -88,7 +88,7 @@ export const Tabs = {
     <FlatList
       contentContainerStyle={[contentContainerStyle, { minHeight: '100%' }]}
       {...props}
-      renderScrollComponent={renderScrollComponent}
+      // renderScrollComponent={renderScrollComponent}
     />
   ),
   ScrollView,
@@ -96,7 +96,7 @@ export const Tabs = {
     <SectionList
       contentContainerStyle={[contentContainerStyle, { minHeight: '100%' }]}
       {...props}
-      renderScrollComponent={renderScrollComponent}
+      // renderScrollComponent={renderScrollComponent}
     />
   ),
 };
