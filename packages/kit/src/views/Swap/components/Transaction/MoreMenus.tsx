@@ -96,11 +96,12 @@ export const ReceiptMoreMenus: FC<IMenu & ReceiptProps> = ({
 
   const options = useMemo(() => {
     const baseOptions: IBaseMenuOptions = [
-      Boolean(account) && {
-        id: 'action__view_account',
-        onPress: () => onOpenAccount(),
-        icon: 'UserOutline',
-      },
+      Boolean(account) &&
+        Boolean(networkId) && {
+          id: 'action__view_account',
+          onPress: () => onOpenAccount(),
+          icon: 'UserOutline',
+        },
       {
         id: 'action__copy_address',
         onPress: () => setTimeout(() => copyText(address ?? ''), 200),
@@ -113,7 +114,7 @@ export const ReceiptMoreMenus: FC<IMenu & ReceiptProps> = ({
       },
     ];
     return baseOptions;
-  }, [copyText, openBlockBrowser, onOpenAccount, address, account]);
+  }, [copyText, openBlockBrowser, onOpenAccount, address, account, networkId]);
 
   return <BaseMenu options={options} {...rest} />;
 };
