@@ -85,6 +85,8 @@ export function convertDeviceError(payload: any): OneKeyHardwareError {
       return new Error.FirmwareVersionTooLow(payload);
     case HardwareErrorCode.NewFirmwareUnRelease:
       return new Error.NewFirmwareUnRelease(payload);
+    case HardwareErrorCode.NewFirmwareForceUpdate:
+      return new Error.NewFirmwareForceUpdate(payload);
     case HardwareErrorCode.NetworkError:
       return new Error.NetworkError(payload);
     case HardwareErrorCode.BlePermissionError:
@@ -139,8 +141,16 @@ export function convertDeviceError(payload: any): OneKeyHardwareError {
       return new Error.BridgeTimeoutError(payload);
     case HardwareErrorCode.PollingTimeout:
       return new Error.ConnectTimeoutError(payload);
+    case HardwareErrorCode.PollingStop:
+      return new Error.ConnectPollingStopError(payload);
     case HardwareErrorCode.BlindSignDisabled:
       return new Error.OpenBlindSign(payload);
+    case HardwareErrorCode.FileAlreadyExists:
+      return new Error.FileAlreadyExistError(payload);
+    case HardwareErrorCode.CheckDownloadFileError:
+      return new Error.IncompleteFileError(payload);
+    case HardwareErrorCode.NotInSigningMode:
+      return new Error.NotInSigningModeError(payload);
     default:
       return new Error.UnknownHardwareError(payload);
   }

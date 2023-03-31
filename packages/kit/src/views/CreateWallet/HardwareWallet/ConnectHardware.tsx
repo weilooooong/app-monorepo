@@ -2,7 +2,7 @@ import type { FC } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { HardwareErrorCode } from '@onekeyfe/hd-shared';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useIntl } from 'react-intl';
 import { StyleSheet } from 'react-native';
 
@@ -34,7 +34,7 @@ import KeepDeviceAroundSource from '@onekeyhq/kit/assets/wallet/keep_device_clos
 import backgroundApiProxy from '@onekeyhq/kit/src/background/instance/backgroundApiProxy';
 import NeedBridgeDialog from '@onekeyhq/kit/src/components/NeedBridgeDialog';
 import { useRuntime } from '@onekeyhq/kit/src/hooks/redux';
-import type { CreateWalletRoutesParams } from '@onekeyhq/kit/src/routes/Modal/CreateWallet';
+import type { CreateWalletRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/CreateWallet';
 import {
   CreateWalletModalRoutes,
   ModalRoutes,
@@ -58,8 +58,15 @@ import {
   NeedBluetoothTurnedOn,
 } from '../../../utils/hardware/errors';
 
+import type { RouteProp } from '@react-navigation/native';
+
 type NavigationProps = ModalScreenProps<RootRoutesParams> &
   ModalScreenProps<CreateWalletRoutesParams>;
+
+type RouteProps = RouteProp<
+  CreateWalletRoutesParams,
+  CreateWalletModalRoutes.ConnectHardwareModal
+>;
 
 const getDeviceIcon = (
   type: IOneKeyDeviceType,
@@ -90,6 +97,7 @@ const ConnectHardwareModal: FC = () => {
   const intl = useIntl();
   const { engine, serviceHardware } = backgroundApiProxy;
   const navigation = useNavigation<NavigationProps['navigation']>();
+  const { entry } = useRoute<RouteProps>().params ?? {};
   const [isSearching, setIsSearching] = useState(false);
   const [isConnectingDeviceId, setIsConnectingDeviceId] = useState('');
 
@@ -290,6 +298,7 @@ const ConnectHardwareModal: FC = () => {
             screen: CreateWalletModalRoutes.DeviceStatusCheckModal,
             params: {
               device,
+              entry,
             },
           },
         });

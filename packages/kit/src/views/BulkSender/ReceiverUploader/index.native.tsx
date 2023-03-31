@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
 
-import * as FileSystem from 'expo-file-system';
+import { EncodingType, readAsStringAsync } from 'expo-file-system';
 import { pickSingle, types } from 'react-native-document-picker';
 import { read, utils } from 'xlsx';
 
 import { Box, Center, Icon, Pressable } from '@onekeyhq/components';
 
+import { ReceiverErrors } from '../ReceiverEditor/ReceiverErrors';
 import { ReceiverExample } from '../ReceiverExample';
 import { TokenReceiverEnum } from '../types';
 
@@ -14,10 +15,17 @@ import type { TokenReceiver } from '../types';
 interface Props {
   setReceiverFromOut: React.Dispatch<React.SetStateAction<TokenReceiver[]>>;
   setIsUploadMode: React.Dispatch<React.SetStateAction<boolean>>;
+  showFileError: boolean;
+  setShowFileError: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 function ReceiverUploader(props: Props) {
-  const { setReceiverFromOut, setIsUploadMode } = props;
+  const {
+    setReceiverFromOut,
+    setIsUploadMode,
+    showFileError,
+    setShowFileError,
+  } = props;
 
   const handleUploadFile = useCallback(async () => {
     try {
@@ -29,8 +37,13 @@ function ReceiverUploader(props: Props) {
       });
       const path = f.fileCopyUri;
       if (!path) return;
-      const b64 = await FileSystem.readAsStringAsync(path, {
-        encoding: FileSystem.EncodingType.Base64,
+      const type = path.split('.').pop();
+      if (!['xlsx', 'txt', 'csv', 'xls'].includes(type?.toLowerCase() ?? '')) {
+        setShowFileError(true);
+        return;
+      }
+      const b64 = await readAsStringAsync(path, {
+        encoding: EncodingType.Base64,
       });
       const wb = read(b64, { raw: true, type: 'base64' });
 
@@ -46,12 +59,15 @@ function ReceiverUploader(props: Props) {
               item.Amount !== TokenReceiverEnum.Amount,
           ),
         );
+        setShowFileError(false);
         setIsUploadMode(false);
+      } else {
+        setShowFileError(true);
       }
     } catch {
-      // pass
+      setShowFileError(true);
     }
-  }, [setIsUploadMode, setReceiverFromOut]);
+  }, [setIsUploadMode, setReceiverFromOut, setShowFileError]);
 
   return (
     <>
@@ -67,6 +83,9 @@ function ReceiverUploader(props: Props) {
           <Icon name="UploadOutline" size={40} color="icon-subdued" />
         </Center>
       </Pressable>
+      <Box mt={3}>
+        <ReceiverErrors receiverErrors={[]} showFileError={showFileError} />
+      </Box>
       <Box mt={4}>
         <ReceiverExample />
       </Box>

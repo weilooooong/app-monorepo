@@ -421,6 +421,7 @@ export default class Vault extends VaultBase {
       coinType: dbAccount.coinType,
       tokens: [],
       address: dbAccount.addresses?.[this.networkId] || '',
+      template: dbAccount.template,
     };
     if (
       ret.address.length === 0 &&
@@ -532,7 +533,7 @@ export default class Vault extends VaultBase {
     };
   }
 
-  override getPrivateKeyByCredential(credential: string) {
+  override async getPrivateKeyByCredential(credential: string) {
     let privateKey;
     if (credential.length === 160) {
       // Lotus type private key:
@@ -549,7 +550,7 @@ export default class Vault extends VaultBase {
     } else if (credential.length === 64) {
       privateKey = Buffer.from(credential, 'hex');
     }
-    return privateKey;
+    return Promise.resolve(privateKey);
   }
 
   override async addressFromBase(account: DBAccount) {

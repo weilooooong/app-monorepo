@@ -1,9 +1,10 @@
-import type { FC } from 'react';
-import { Children, Fragment } from 'react';
+import type { ForwardRefRenderFunction } from 'react';
+import { Children, Fragment, forwardRef } from 'react';
 
 // @ts-expect-error
 // import NestedScrollView from 'react-native-nested-scroll-view';
 
+import type { ForwardRefHandle } from '@onekeyhq/app/src/views/NestedTabView/NestedTabView';
 import NestedTabView from '@onekeyhq/app/src/views/NestedTabView/NestedTabView';
 import type { TabProps } from '@onekeyhq/app/src/views/NestedTabView/types';
 import { useThemeValue } from '@onekeyhq/components';
@@ -15,22 +16,34 @@ import { Body2StrongProps } from '../Typography';
 
 import type { CollapsibleContainerProps } from './types';
 
-const Container: FC<CollapsibleContainerProps> = ({
-  disableRefresh,
-  refreshing,
-  renderHeader,
-  children,
-  onIndexChange,
-  onRefresh,
-  containerStyle,
-  scrollEnabled = false,
-  ...props
-}) => {
+const Container: ForwardRefRenderFunction<
+  ForwardRefHandle,
+  CollapsibleContainerProps
+> = (
+  {
+    disableRefresh,
+    refreshing,
+    renderHeader,
+    children,
+    onIndexChange,
+    onRefresh,
+    initialTabName,
+    containerStyle,
+    scrollEnabled = true,
+    ...props
+  },
+  ref,
+) => {
   const tabs = Children.map(children, (child) =>
     // @ts-ignore
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
     ({ name: child.props.name, label: child.props.label }),
   ) as TabProps[];
+
+  let selectedIndex = tabs.findIndex((tab) => tab.name === initialTabName);
+  if (selectedIndex < 0) {
+    selectedIndex = 0;
+  }
 
   const [
     activeLabelColor,
@@ -48,10 +61,12 @@ const Container: FC<CollapsibleContainerProps> = ({
 
   return (
     <NestedTabView
+      ref={ref}
       values={tabs}
       style={containerStyle}
       disableRefresh={disableRefresh}
       refresh={refreshing}
+      defaultIndex={selectedIndex}
       tabViewStyle={{
         height: 54,
         indicatorColor,
@@ -64,7 +79,7 @@ const Container: FC<CollapsibleContainerProps> = ({
       onRefreshCallBack={() => {
         setTimeout(() => {
           onRefresh?.();
-        }, 0);
+        });
       }}
       renderHeader={renderHeader}
       onChange={(e) => {
@@ -81,7 +96,7 @@ const Container: FC<CollapsibleContainerProps> = ({
 // const renderScrollComponent = (props: any) => <NestedScrollView {...props} />;
 
 export const Tabs = {
-  Container,
+  Container: forwardRef(Container),
   // @ts-ignore to stop the warning about Fragment under development
   Tab: __DEV__ ? ({ children }) => <>{children}</> : Fragment,
   FlatList: ({ contentContainerStyle, ...props }: any) => (

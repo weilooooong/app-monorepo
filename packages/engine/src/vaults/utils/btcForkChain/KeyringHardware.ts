@@ -16,6 +16,8 @@ import {
   OneKeyHardwareError,
   OneKeyInternalError,
 } from '../../../errors';
+import { slicePathTemplate } from '../../../managers/derivation';
+import { getAccountNameInfoByTemplate } from '../../../managers/impl';
 import { AccountType } from '../../../types/account';
 import { KeyringHardwareBase } from '../../keyring/KeyringHardwareBase';
 
@@ -24,9 +26,10 @@ import { getAccountDefaultByPurpose } from './utils';
 import type { DBUTXOAccount } from '../../../types/account';
 import type {
   IGetAddressParams,
+  IPrepareAccountByAddressIndexParams,
   IPrepareHardwareAccountsParams,
 } from '../../types';
-import type { TxInput, TxOutput, UTXO } from './types';
+import type { AddressEncodings, TxInput, TxOutput, UTXO } from './types';
 import type BTCForkVault from './VaultBtcFork';
 import type { RefTransaction } from '@onekeyfe/hd-core';
 import type { Messages } from '@onekeyfe/hd-transport';
@@ -83,8 +86,60 @@ export class KeyringHardware extends KeyringHardwareBase {
   override async prepareAccounts(
     params: IPrepareHardwareAccountsParams,
   ): Promise<DBUTXOAccount[]> {
-    const { indexes, purpose, names } = params;
+    const { indexes, purpose, names, template, skipCheckAccountExist } = params;
+    const provider = await (
+      this.vault as unknown as BTCForkVault
+    ).getProvider();
 
+    const ret = await this.createAccount({
+      indexes,
+      purpose,
+      names,
+      template,
+      addressIndex: 0,
+      isChange: false,
+      isCustomAddress: false,
+      validator: skipCheckAccountExist
+        ? undefined
+        : async ({ xpub, addressEncoding }) => {
+            const { txs } = (await provider.getAccount(
+              { type: 'simple', xpub },
+              addressEncoding,
+            )) as { txs: number };
+            return txs > 0;
+          },
+    });
+    return ret;
+  }
+
+  private async createAccount({
+    indexes,
+    purpose,
+    names,
+    template,
+    addressIndex,
+    isChange,
+    isCustomAddress,
+    validator,
+  }: {
+    indexes: number[];
+    purpose?: number;
+    names?: string[];
+    template: string;
+    addressIndex: number;
+    isChange: boolean;
+    isCustomAddress: boolean;
+    validator?: ({
+      xpub,
+      address,
+      addressEncoding,
+    }: {
+      xpub: string;
+      address: string;
+      addressEncoding: AddressEncodings;
+    }) => Promise<boolean>;
+  }) {
+    const impl = await this.getNetworkImpl();
     const vault = this.vault as unknown as BTCForkVault;
     const defaultPurpose = vault.getDefaultPurpose();
     const coinName = vault.getCoinName();
@@ -93,10 +148,11 @@ export class KeyringHardware extends KeyringHardwareBase {
     const usedPurpose = purpose || defaultPurpose;
     const ignoreFirst = indexes[0] !== 0;
     const usedIndexes = [...(ignoreFirst ? [indexes[0] - 1] : []), ...indexes];
-    const { addressEncoding, namePrefix } = getAccountDefaultByPurpose(
+    const { addressEncoding } = getAccountDefaultByPurpose(
       usedPurpose,
       coinName,
     );
+    const { prefix: namePrefix } = getAccountNameInfoByTemplate(impl, template);
     const provider = await (
       this.vault as unknown as BTCForkVault
     ).getProvider();
@@ -106,9 +162,10 @@ export class KeyringHardware extends KeyringHardwareBase {
       const { connectId, deviceId } = await this.getHardwareInfo();
       const passphraseState = await this.getWalletPassphraseState();
       await this.getHardwareSDKInstance();
+      const { pathPrefix } = slicePathTemplate(template);
       response = await HardwareSDK.btcGetPublicKey(connectId, deviceId, {
         bundle: usedIndexes.map((index) => ({
-          path: `m/${usedPurpose}'/${COIN_TYPE}'/${index}'`,
+          path: `${pathPrefix}/${index}'`,
           coin: coinName.toLowerCase(),
           showOnOneKey: false,
         })),
@@ -130,12 +187,16 @@ export class KeyringHardware extends KeyringHardwareBase {
 
     const ret = [];
     let index = 0;
-    for (const { path, xpub } of response.payload) {
-      const firstAddressRelPath = '0/0';
-      const { [firstAddressRelPath]: address } = provider.xpubToAddresses(
+    for (const { path, xpub, xpubSegwit } of response.payload) {
+      const addressRelPath = `${isChange ? '1' : '0'}/${addressIndex}`;
+      const { [addressRelPath]: address } = provider.xpubToAddresses(
         xpub,
-        [firstAddressRelPath],
+        [addressRelPath],
+        addressEncoding,
       );
+      const customAddresses = isCustomAddress
+        ? { [addressRelPath]: address }
+        : undefined;
       const prefix = [COINTYPE_DOGE, COINTYPE_BCH].includes(COIN_TYPE)
         ? coinName
         : namePrefix;
@@ -149,8 +210,11 @@ export class KeyringHardware extends KeyringHardwareBase {
           path,
           coinType: COIN_TYPE,
           xpub,
+          xpubSegwit: xpubSegwit || xpub,
           address,
-          addresses: { [firstAddressRelPath]: address },
+          addresses: { [addressRelPath]: address },
+          customAddresses,
+          template,
         });
       }
 
@@ -159,21 +223,43 @@ export class KeyringHardware extends KeyringHardwareBase {
         break;
       }
 
-      const { txs } = (await provider.getAccount(
-        { type: 'simple', xpub },
-        addressEncoding,
-      )) as { txs: number };
-      if (txs > 0) {
-        index += 1;
-        // blockbook API rate limit.
-        await new Promise((r) => setTimeout(r, 200));
+      if (validator) {
+        if (
+          await validator?.({
+            xpub: xpubSegwit || xpub,
+            address,
+            addressEncoding,
+          })
+        ) {
+          index += 1;
+          await new Promise((r) => setTimeout(r, 200));
+        } else {
+          // Software should prevent a creation of an account
+          // if a previous account does not have a transaction history (meaning none of its addresses have been used before).
+          // https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki
+          break;
+        }
       } else {
-        // Software should prevent a creation of an account
-        // if a previous account does not have a transaction history (meaning none of its addresses have been used before).
-        // https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki
-        break;
+        index += 1;
       }
     }
+
+    return ret;
+  }
+
+  override async prepareAccountByAddressIndex(
+    params: IPrepareAccountByAddressIndexParams,
+  ): Promise<DBUTXOAccount[]> {
+    const { template, accountIndex, addressIndex } = params;
+    const purpose = parseInt(template.split('/')?.[1], 10);
+    const ret = this.createAccount({
+      indexes: [accountIndex],
+      purpose,
+      template,
+      addressIndex,
+      isChange: false,
+      isCustomAddress: true,
+    });
     return ret;
   }
 
@@ -241,23 +327,31 @@ export class KeyringHardware extends KeyringHardwareBase {
 
   async getAddress(params: IGetAddressParams): Promise<string> {
     const coinName = (this.vault as unknown as BTCForkVault).getCoinName();
-    const dbAccount = (await this.getDbAccount({
-      noCache: true,
-    })) as DBUTXOAccount;
-    const { addresses, address, path } = dbAccount;
-    const pathSuffix = Object.keys(dbAccount.addresses).find(
-      (key) => addresses[key] === address,
-    );
 
-    if (!pathSuffix) {
-      return '';
+    let path = '';
+
+    if (params.isTemplatePath) {
+      path = params.path;
+    } else {
+      const dbAccount = (await this.getDbAccount({
+        noCache: true,
+      })) as DBUTXOAccount;
+      const { addresses, address } = dbAccount;
+      const pathSuffix = Object.keys(dbAccount.addresses).find(
+        (key) => addresses[key] === address,
+      );
+
+      if (!pathSuffix) {
+        return '';
+      }
+      path = `${dbAccount.path}/${pathSuffix}`;
     }
 
     await this.getHardwareSDKInstance();
     const { connectId, deviceId } = await this.getHardwareInfo();
     const passphraseState = await this.getWalletPassphraseState();
     const response = await HardwareSDK.btcGetAddress(connectId, deviceId, {
-      path: `${path}/${pathSuffix}`,
+      path,
       showOnOneKey: params.showOnOneKey,
       coin: coinName.toLowerCase(),
       ...passphraseState,

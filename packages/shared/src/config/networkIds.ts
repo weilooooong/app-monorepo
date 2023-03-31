@@ -36,6 +36,7 @@ export const OnekeyNetwork = {
   'cronos': 'evm--25',
   'fantom': 'evm--250',
   'boba': 'evm--288',
+  'zksyncera': 'evm--324',
   'arbitrum': 'evm--42161',
   'celo': 'evm--42220',
   'avalanche': 'evm--43114',
@@ -47,7 +48,9 @@ export const OnekeyNetwork = {
   'theco': 'evm--256',
   'tboba': 'evm--28',
   'tarbitrum': 'evm--421611',
+  'tarbitrum-goerli': 'evm--421613',
   'goerli': 'evm--5',
+  'tscroll': 'evm--534353',
   'tokt': 'evm--65',
   'toptimism': 'evm--69',
   'tpolygon': 'evm--80001',
@@ -66,7 +69,6 @@ export const OnekeyNetwork = {
   'trx': 'tron--0x2b6653dc',
   'ttrx': 'tron--0x94a9059e',
   'xmr': 'xmr--0',
-  'txmr': 'xmr--1',
   'xrp': 'xrp--0',
 } as const;
 

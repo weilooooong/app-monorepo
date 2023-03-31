@@ -11,15 +11,13 @@ import backgroundApiProxy from '@onekeyhq/kit/src/background/instance/background
 import Protected, {
   ValidationFields,
 } from '@onekeyhq/kit/src/components/Protected';
-import type {
-  CreateWalletModalRoutes,
-  CreateWalletRoutesParams,
-} from '@onekeyhq/kit/src/routes/Modal/CreateWallet';
+import type { CreateWalletRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/CreateWallet';
 
 import { useNavigation } from '../../../hooks';
 import { setEnableLocalAuthentication } from '../../../store/reducers/settings';
 import { savePassword } from '../../../utils/localAuthentication';
 
+import type { CreateWalletModalRoutes } from '../../../routes/routesEnum';
 import type { RouteProp } from '@react-navigation/native';
 
 type RouteProps = RouteProp<
@@ -31,6 +29,7 @@ type DoneProps = {
   password: string;
   privatekey: string;
   name: string;
+  template?: string;
   networkId: string;
   withEnableAuthentication?: boolean;
   onSuccess?: (options: { account: Account }) => void;
@@ -40,6 +39,7 @@ type DoneProps = {
 const Done: FC<DoneProps> = ({
   privatekey,
   name,
+  template,
   networkId,
   password,
   withEnableAuthentication,
@@ -57,6 +57,7 @@ const Done: FC<DoneProps> = ({
             networkId,
             privatekey,
             name,
+            template,
           );
         if (withEnableAuthentication) {
           backgroundApiProxy.dispatch(setEnableLocalAuthentication(true));
@@ -88,10 +89,10 @@ const Done: FC<DoneProps> = ({
   );
 };
 
-export const AddImportedAccountDone = () => {
+const AddImportedAccountDone = () => {
   const route = useRoute<RouteProps>();
   const navigation = useNavigation();
-  const { privatekey, name, networkId, onSuccess, onFailure } =
+  const { privatekey, name, networkId, template, onSuccess, onFailure } =
     route.params ?? {};
   useEffect(() => {
     navigation.setOptions({ gestureEnabled: false });
@@ -108,6 +109,7 @@ export const AddImportedAccountDone = () => {
             withEnableAuthentication={withEnableAuthentication}
             privatekey={privatekey}
             name={name}
+            template={template}
             networkId={networkId}
             password={password}
             onSuccess={onSuccess}

@@ -11,7 +11,9 @@ import {
   backgroundClass,
   providerApiMethod,
 } from '@onekeyhq/shared/src/background/backgroundDecorators';
-import { getDebugLoggerSettings } from '@onekeyhq/shared/src/logger/debugLogger';
+import debugLogger, {
+  getDebugLoggerSettings,
+} from '@onekeyhq/shared/src/logger/debugLogger';
 import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import ProviderApiBase from './ProviderApiBase';
@@ -212,29 +214,38 @@ class ProviderApiPrivate extends ProviderApiBase {
   }
 
   @providerApiMethod()
-  callCardanoWebEmbedMethod(payload: any) {
-    console.log('$privide provide request ===> callCardanoWebEmbedMethod');
-    console.log('callCardanoWebEmbedMethod =====>>>>>>>');
-    console.log(payload);
+  callChainWebEmbedMethod(payload: any) {
+    const method: string = payload.data?.method;
+    debugLogger.providerApi.info(
+      'ProviderApiPrivate.callChainWebEmbedMethod',
+      payload,
+    );
     const data = ({ origin }: { origin: string }) => {
-      console.log(origin);
       const result = {
-        method: payload.data?.method,
+        method,
         params: {
           event: payload.data?.event,
           promiseId: payload.data?.promiseId,
           params: { ...payload.data?.params },
         },
       };
+      debugLogger.providerApi.info(
+        'ProviderApiPrivate.callChainWebEmbedMethod',
+        method,
+        origin,
+        result,
+      );
       return result;
     };
     payload.data?.send?.(data);
   }
 
   @providerApiMethod()
-  cardanoWebEmbedResponse(payload: any) {
-    console.log('cardanoWebEmbedResponse =====<<<<<<<');
-    console.log(payload);
+  chainWebEmbedResponse(payload: any) {
+    debugLogger.providerApi.info(
+      'ProviderApiPrivate.chainWebEmbedResponse',
+      payload,
+    );
     this.backgroundApi.servicePromise.resolveCallback({
       id: payload?.data?.promiseId,
       data: { ...(payload?.data?.data ?? {}) },

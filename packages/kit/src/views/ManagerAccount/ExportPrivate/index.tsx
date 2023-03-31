@@ -18,25 +18,27 @@ import {
   useIsVerticalLayout,
 } from '@onekeyhq/components';
 import { copyToClipboard } from '@onekeyhq/components/src/utils/ClipboardUtils';
-import type { Account as AccountEngineType } from '@onekeyhq/engine/src/types/account';
+import type {
+  AccountCredentialType,
+  Account as AccountEngineType,
+} from '@onekeyhq/engine/src/types/account';
 import BlurQRCode from '@onekeyhq/kit/assets/blur-qrcode.png';
 import qrcodeLogo from '@onekeyhq/kit/assets/qrcode_logo.png';
 import Protected, {
   ValidationFields,
 } from '@onekeyhq/kit/src/components/Protected';
-import type {
-  ManagerAccountModalRoutes,
-  ManagerAccountRoutesParams,
-} from '@onekeyhq/kit/src/routes/Modal/ManagerAccount';
+import type { ManagerAccountRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/ManagerAccount';
 
 import backgroundApiProxy from '../../../background/instance/backgroundApiProxy';
 
+import type { ManagerAccountModalRoutes } from '../../../routes/routesEnum';
 import type { RouteProp } from '@react-navigation/core';
 
 type ExportPrivateViewProps = {
   accountId: string;
   networkId: string;
   password: string;
+  credentialType: AccountCredentialType;
   onAccountChange: (account: AccountEngineType) => void;
 };
 
@@ -44,6 +46,7 @@ const ExportPrivateView: FC<ExportPrivateViewProps> = ({
   accountId,
   networkId,
   password,
+  credentialType,
   onAccountChange,
 }) => {
   const intl = useIntl();
@@ -61,9 +64,15 @@ const ExportPrivateView: FC<ExportPrivateViewProps> = ({
       onAccountChange($account);
     });
 
-    engine.getAccountPrivateKey(accountId, password).then(($privateKey) => {
-      setPrivateKey($privateKey);
-    });
+    engine
+      .getAccountPrivateKey({
+        accountId,
+        credentialType,
+        password,
+      })
+      .then(($privateKey) => {
+        setPrivateKey($privateKey);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, engine, networkId, password]);
 
@@ -154,13 +163,13 @@ type NavigationProps = RouteProp<
 const ExportPrivateViewModal = () => {
   const intl = useIntl();
   const route = useRoute<NavigationProps>();
-  const { accountId, networkId } = route.params;
+  const { accountId, networkId, accountCredential } = route.params;
   const [account, setAccount] = useState<AccountEngineType>();
 
   return (
     <Modal
       footer={null}
-      header={intl.formatMessage({ id: 'action__export_private_key' })}
+      header={intl.formatMessage({ id: accountCredential.key })}
       headerDescription={account?.name}
       height="auto"
     >
@@ -173,6 +182,7 @@ const ExportPrivateViewModal = () => {
           <ExportPrivateView
             accountId={accountId}
             networkId={networkId}
+            credentialType={accountCredential.type}
             password={pwd}
             onAccountChange={(acc) => setAccount(acc)}
           />

@@ -9,12 +9,14 @@ import type ProviderApiBase from './providers/ProviderApiBase';
 import type { ProviderApiWalletConnect } from './providers/ProviderApiWalletConnect';
 import type ServiceAccount from './services/ServiceAccount';
 import type ServiceAccountSelector from './services/ServiceAccountSelector';
+import type ServiceAddressbook from './services/ServiceAddressbook';
 import type ServiceApp from './services/ServiceApp';
 import type ServiceBatchTransfer from './services/ServiceBatchTransfer';
 import type ServiceBootstrap from './services/ServiceBootstrap';
 import type ServiceCloudBackup from './services/ServiceCloudBackup';
 import type ServiceCronJob from './services/ServiceCronJob';
 import type ServiceDapp from './services/ServiceDapp';
+import type ServiceDerivationPath from './services/ServiceDerivationPath';
 import type ServiceDiscover from './services/ServiceDiscover';
 import type ServiceExternalAccount from './services/ServiceExternalAccount';
 import type ServiceFiatPay from './services/ServiceFiatPay';
@@ -102,5 +104,7 @@ export interface IBackgroundApi extends IBackgroundApiBridge {
   serviceDiscover: ServiceDiscover;
   serviceMigrate: ServiceMigrate;
   serviceHTTP: ServiceHTTP;
+  serviceDerivationPath: ServiceDerivationPath;
   serviceFiatPay: ServiceFiatPay;
+  serviceAddressbook: ServiceAddressbook;
 }

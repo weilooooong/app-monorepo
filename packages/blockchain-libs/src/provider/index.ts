@@ -113,7 +113,7 @@ const IMPLS: { [key: string]: any } = {
   sol: require('./chains/sol'),
   stc: require('./chains/stc'),
   near: require('./chains/near'),
-  btc: require('./chains/btc'),
+  btc: mockProvider,
   bch: mockProvider,
   ltc: mockProvider,
   doge: mockProvider,
@@ -125,6 +125,7 @@ const IMPLS: { [key: string]: any } = {
   dot: mockProvider,
   sui: mockProvider,
   apt: mockProvider,
+  xmr: mockProvider,
 };
 
 class ProviderController {

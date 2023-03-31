@@ -1,4 +1,3 @@
-import fetch from 'cross-fetch';
 import RNUUID from 'react-native-uuid';
 
 import {
@@ -18,6 +17,7 @@ import { MigrateErrorCode } from '@onekeyhq/engine/src/types/migrate';
 import {
   deviceInfo,
   generatePassword,
+  parseCloudData,
   randomString,
   shuffle,
 } from '@onekeyhq/kit/src/views/Onboarding/screens/Migration/util';
@@ -40,6 +40,7 @@ import ServiceBase from './ServiceBase';
 import { HTTPServiceNames } from './ServiceHTTP';
 
 import type { RequestData } from './ServiceHTTP';
+import type { AxiosError } from 'axios';
 
 const RAMDOMNUM_LEAGTH = 4;
 
@@ -271,7 +272,7 @@ class ServiceMigrate extends ServiceBase {
         ipAddress,
         MigrateAPINames.Connect,
       )}?${urlParams.toString()}`;
-      const { success, data } = await this.client
+      const { success, data, message } = await this.client
         .get<
           MigrateServiceResp<{
             deviceInfo: DeviceInfo;
@@ -279,9 +280,16 @@ class ServiceMigrate extends ServiceBase {
           }>
         >(url, { timeout: 60 * 1000 })
         .then((resp) => resp.data)
-        .catch(() => ({ success: false, data: undefined, message: undefined }));
+        .catch((e: AxiosError) => ({
+          success: false,
+          data: undefined,
+          message: e.code,
+        }));
       if (!success || data === undefined) {
         this.clearMigrateInfo(this.ensureUUID({ reset: false }));
+        if (message) {
+          return message;
+        }
         return;
       }
       const { deviceInfo: serverInfo, password } = data;
@@ -361,21 +369,19 @@ class ServiceMigrate extends ServiceBase {
       if (encryptData === false) {
         return false;
       }
-      const { success } = await fetch(url, {
-        method: 'POST',
-        body: encryptData,
-      })
-        .then((result) => {
-          if (result.ok) {
-            return result.json() as MigrateServiceResp<boolean>;
-          }
+      const { success } = await this.client
+        .post<MigrateServiceResp<boolean>>(url, encryptData, {
+          headers: {
+            'Content-Type': 'text/plain',
+          },
+        })
+        .then((resp) => resp.data)
+        .catch((error) => {
+          debugLogger.migrate.error('sendDataToServer :', error);
           return {
             success: false,
           };
-        })
-        .catch(() => ({
-          success: false,
-        }));
+        });
       return success;
     } catch (error) {
       debugLogger.migrate.error('sendDataToServer encrypt:', error);
@@ -416,7 +422,7 @@ class ServiceMigrate extends ServiceBase {
       );
       if (typeof decryptData === 'string') {
         try {
-          return JSON.parse(decryptData) as MigrateData;
+          return parseCloudData(JSON.parse(decryptData)) as MigrateData;
         } catch {
           debugLogger.migrate.error('parse decryptData error');
         }
@@ -520,7 +526,7 @@ class ServiceMigrate extends ServiceBase {
         } else {
           this.clearMigrateInfo();
           failResponse(
-            'Get client public pey',
+            'Get client public key',
             MigrateErrorCode.PublicKeyError,
           );
         }
@@ -549,7 +555,10 @@ class ServiceMigrate extends ServiceBase {
         return;
       }
       const { postData: encryptData } = data;
-
+      if (encryptData === undefined) {
+        failResponse('encryptData not found', MigrateErrorCode.ConnectFail);
+        return;
+      }
       if (this.keypair === undefined) {
         failResponse('keypair lose', MigrateErrorCode.KetPairLose);
         return;

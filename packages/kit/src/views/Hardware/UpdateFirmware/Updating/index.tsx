@@ -10,10 +10,7 @@ import { Modal, ToastManager } from '@onekeyhq/components';
 import type { OneKeyHardwareError } from '@onekeyhq/engine/src/errors';
 import backgroundApiProxy from '@onekeyhq/kit/src/background/instance/backgroundApiProxy';
 import { useAppSelector, useSettings } from '@onekeyhq/kit/src/hooks/redux';
-import type {
-  HardwareUpdateModalRoutes,
-  HardwareUpdateRoutesParams,
-} from '@onekeyhq/kit/src/routes/Modal/HardwareUpdate';
+import type { HardwareUpdateRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/HardwareUpdate';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
 import { setDeviceDoneUpdate } from '@onekeyhq/kit/src/store/reducers/settings';
 import { deviceUtils } from '@onekeyhq/kit/src/utils/hardware';
@@ -28,6 +25,7 @@ import { UI_REQUEST } from '../../PopupHandle/showHardwarePopup';
 import RunningView from './RunningView';
 import StateView from './StateView';
 
+import type { HardwareUpdateModalRoutes } from '../../../../routes/routesEnum';
 import type { StateViewTypeInfo } from './StateView';
 import type { RouteProp } from '@react-navigation/core';
 
@@ -66,6 +64,8 @@ const UpdatingModal: FC = () => {
   const [progressStep, setProgressStep] = useState<ProgressStepType>();
   const progressStepRef = useRef<ProgressStepType>();
   const [progressState, setProgressState] = useState<ProgressStateType>();
+
+  const autoEnterBootFailureCountRef = useRef(0);
 
   useEffect(() => {
     progressStepRef.current = progressStep;
@@ -306,8 +306,32 @@ const UpdatingModal: FC = () => {
       case HardwareErrorCode.ActionCancelled:
       case HardwareErrorCode.PinCancelled:
       case HardwareErrorCode.FirmwareUpdateAutoEnterBootFailure:
+        autoEnterBootFailureCountRef.current += 1;
         if (progressStepRef.current === 'reboot-bootloader') {
-          setStateViewInfo({ type: 'reboot-bootloader-failure' });
+          if (deviceType === 'mini') {
+            setStateViewInfo({
+              type: 'manually-enter-bootloader-one',
+              content: {
+                deviceType,
+                nextState: {
+                  type: 'manually-enter-bootloader-two',
+                  content: {
+                    deviceType,
+                    primaryActionTranslationId: 'action__continue',
+                  },
+                },
+              },
+            });
+          } else if (autoEnterBootFailureCountRef.current >= 2) {
+            setStateViewInfo({
+              type: 'manually-enter-bootloader-one',
+              content: {
+                deviceType,
+              },
+            });
+          } else {
+            setStateViewInfo({ type: 'reboot-bootloader-failure' });
+          }
         } else {
           setStateViewInfo({
             type: 'common_error',
@@ -340,15 +364,15 @@ const UpdatingModal: FC = () => {
             },
           });
         }
+
+        ToastManager.show(
+          {
+            title: intl.formatMessage({ id: key }),
+          },
+          { type: 'error' },
+        );
         break;
     }
-
-    ToastManager.show(
-      {
-        title: intl.formatMessage({ id: key }),
-      },
-      { type: 'error' },
-    );
 
     setProgressState('failure');
   };

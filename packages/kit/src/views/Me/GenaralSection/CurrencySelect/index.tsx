@@ -80,7 +80,11 @@ const PopularCard: FC<PopularCardProps> = ({ currency, index, onPress }) => {
             <Typography.Body1Strong color="text-default">
               {`${currency.toLocaleUpperCase()} - ${currencyData.unit ?? '$'}`}
             </Typography.Body1Strong>
-            <Typography.Button2 color="text-subdued">
+            <Typography.Button2
+              lineHeight={14}
+              numberOfLines={2}
+              color="text-subdued"
+            >
               {currencyData.name ?? ''}
             </Typography.Button2>
           </Box>
@@ -172,7 +176,7 @@ type CurrencySectionLableProps = {
 };
 
 const CurrencySectionLable: FC<CurrencySectionLableProps> = ({ title }) => (
-  <Box px={{ base: '16px', md: '24px' }} my={2}>
+  <Box px={{ base: '16px', md: '24px' }} py={2} bgColor="background-default">
     <Typography.Subheading color="text-subdued">{title}</Typography.Subheading>
   </Box>
 );
@@ -281,7 +285,7 @@ const CurrencySelectModal: FC = () => {
       <KeyboardAvoidingView flex={1}>
         <SectionList
           flex={1}
-          py={1}
+          mt={1}
           contentContainerStyle={{ paddingBottom: bottom }}
           sections={terms.length > 0 ? searchList : ratesSectionList}
           renderItem={renderItem}

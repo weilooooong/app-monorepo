@@ -1,7 +1,10 @@
 import { find, flatten } from 'lodash';
 
 import simpleDb from '@onekeyhq/engine/src/dbs/simple/simpleDb';
-import { OneKeyErrorClassNames } from '@onekeyhq/engine/src/errors';
+import {
+  OneKeyAlreadyExistWalletError,
+  OneKeyErrorClassNames,
+} from '@onekeyhq/engine/src/errors';
 import { isAccountCompatibleWithNetwork } from '@onekeyhq/engine/src/managers/account';
 import {
   generateNetworkIdByChainId,
@@ -10,6 +13,8 @@ import {
 } from '@onekeyhq/engine/src/managers/network';
 import type { IAccount, INetwork, IWallet } from '@onekeyhq/engine/src/types';
 import type { Account, DBAccount } from '@onekeyhq/engine/src/types/account';
+import { AccountType } from '@onekeyhq/engine/src/types/account';
+import type { Network } from '@onekeyhq/engine/src/types/network';
 import type { Wallet, WalletType } from '@onekeyhq/engine/src/types/wallet';
 import { getActiveWalletAccount } from '@onekeyhq/kit/src/hooks/redux';
 import { getManageNetworks } from '@onekeyhq/kit/src/hooks/useManageNetworks';
@@ -19,6 +24,7 @@ import {
   changeActiveExternalWalletName,
   setActiveIds,
 } from '@onekeyhq/kit/src/store/reducers/general';
+import { setPendingRememberWalletConnectId } from '@onekeyhq/kit/src/store/reducers/hardware';
 import {
   updateAccountDetail,
   updateAccounts,
@@ -26,6 +32,8 @@ import {
   updateWallets,
 } from '@onekeyhq/kit/src/store/reducers/runtime';
 import {
+  forgetPassphraseWallet,
+  rememberPassphraseWallet,
   setEnableAppLock,
   setRefreshTS,
 } from '@onekeyhq/kit/src/store/reducers/settings';
@@ -36,6 +44,7 @@ import {
 } from '@onekeyhq/kit/src/store/reducers/status';
 import { DeviceNotOpenedPassphrase } from '@onekeyhq/kit/src/utils/hardware/errors';
 import { wait } from '@onekeyhq/kit/src/utils/helper';
+import { getNetworkIdImpl } from '@onekeyhq/kit/src/views/Swap/utils';
 import {
   backgroundClass,
   backgroundMethod,
@@ -44,16 +53,21 @@ import {
 import { OnekeyNetwork } from '@onekeyhq/shared/src/config/networkIds';
 import {
   COINTYPE_ETH,
+  IMPL_ADA,
   IMPL_CFX,
   IMPL_COSMOS,
-  IMPL_DOT,
   IMPL_FIL,
+  IMPL_XMR,
 } from '@onekeyhq/shared/src/engine/engineConsts';
-import { isHardwareWallet } from '@onekeyhq/shared/src/engine/engineUtils';
+import {
+  isHardwareWallet,
+  isPassphraseWallet,
+} from '@onekeyhq/shared/src/engine/engineUtils';
 import {
   AppEventBusNames,
   appEventBus,
 } from '@onekeyhq/shared/src/eventBus/appEventBus';
+import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
 import { startTrace, stopTrace } from '@onekeyhq/shared/src/perf/perfTrace';
 import timelinePerfTrace, {
   ETimelinePerfNames,
@@ -73,7 +87,13 @@ if (process.env.NODE_ENV !== 'production') {
   global.$$setBoardingCompleted = setBoardingCompleted;
 }
 
-const REFRESH_ACCOUNT_IMPL = [IMPL_COSMOS, IMPL_FIL, IMPL_CFX, IMPL_DOT];
+const REFRESH_ACCOUNT_IMPL = [
+  IMPL_COSMOS,
+  IMPL_FIL,
+  IMPL_CFX,
+  IMPL_XMR,
+  IMPL_XMR,
+];
 
 @backgroundClass()
 class ServiceAccount extends ServiceBase {
@@ -87,6 +107,40 @@ class ServiceAccount extends ServiceBase {
   shouldForceRefreshAccount(networkId?: string): boolean {
     if (!networkId) return false;
     return REFRESH_ACCOUNT_IMPL.includes(parseNetworkId(networkId).impl ?? '');
+  }
+
+  @backgroundMethod()
+  async changeCurrrentAccount({
+    accountId,
+    networkId,
+  }: {
+    accountId: string;
+    networkId: string;
+  }) {
+    const {
+      appSelector,
+      serviceNetwork,
+      serviceAccount,
+      serviceAccountSelector,
+    } = this.backgroundApi;
+    const wallets = appSelector((s) => s.runtime.wallets);
+    for (let i = 0; i < wallets.length; i += 1) {
+      const wallet = wallets[i];
+      const { accounts } = wallet;
+      if (accounts.includes(accountId)) {
+        if (networkId) {
+          await serviceNetwork.changeActiveNetwork(networkId);
+        }
+        if (accountId) {
+          await serviceAccount.changeActiveAccount({
+            accountId: accountId || '',
+            walletId: wallet.id ?? '',
+          });
+        }
+        await serviceAccountSelector.setSelectedWalletToActive();
+        break;
+      }
+    }
   }
 
   @backgroundMethod()
@@ -118,12 +172,21 @@ class ServiceAccount extends ServiceBase {
     this.notifyAccountsChanged();
   }
 
+  getDisplayPassphraseWalletIdList() {
+    const { appSelector } = this.backgroundApi;
+    const runtime = appSelector((s) => s.runtime.displayPassphraseWalletIdList);
+    const remember = appSelector(
+      (s) => s.settings.hardware?.rememberPassphraseWallets,
+    );
+
+    return [...new Set([...(remember || []), ...(runtime || [])])];
+  }
+
   @backgroundMethod()
   async initWallets({ noDispatch } = { noDispatch: false }) {
-    const { engine, dispatch, appSelector } = this.backgroundApi;
-    const displayPassphraseWalletIdList = appSelector(
-      (s) => s.runtime.displayPassphraseWalletIdList,
-    );
+    const { engine, dispatch } = this.backgroundApi;
+    const displayPassphraseWalletIdList =
+      this.getDisplayPassphraseWalletIdList();
     const wallets = await engine.getWallets({
       displayPassphraseWalletIds: displayPassphraseWalletIdList,
     });
@@ -413,6 +476,8 @@ class ServiceAccount extends ServiceBase {
     names?: string[],
     purpose?: number,
     skipRepeat = false,
+    template?: string,
+    skipCheckAccountExist?: boolean,
   ) {
     const { engine } = this.backgroundApi;
     const accounts = await engine.addHdOrHwAccounts({
@@ -423,6 +488,8 @@ class ServiceAccount extends ServiceBase {
       names,
       purpose,
       skipRepeat,
+      template,
+      skipCheckAccountExist,
     });
 
     if (!accounts.length) return;
@@ -454,6 +521,7 @@ class ServiceAccount extends ServiceBase {
     networkId: string,
     credential: string,
     name?: string,
+    template?: string,
   ) {
     const { engine } = this.backgroundApi;
     const account = await engine.addImportedAccount(
@@ -461,6 +529,7 @@ class ServiceAccount extends ServiceBase {
       networkId,
       credential,
       name,
+      template,
     );
 
     await this.postAccountAdded({
@@ -528,7 +597,8 @@ class ServiceAccount extends ServiceBase {
     const { engine } = this.backgroundApi;
     const dbAccount = await engine.dbApi.getAccountByAddress({
       address,
-      coinType,
+      // TODO: template filter multiple coinType network
+      coinType: Array.isArray(coinType) ? '' : coinType,
     });
     return dbAccount;
   }
@@ -612,13 +682,19 @@ class ServiceAccount extends ServiceBase {
 
   // networkId="evm--1"
   @backgroundMethod()
-  async addWatchAccount(networkId: string, address: string, name: string) {
+  async addWatchAccount(
+    networkId: string,
+    address: string,
+    name: string,
+    template?: string,
+  ) {
     const { engine } = this.backgroundApi;
     const account = await engine.addWatchingOrExternalAccount({
       networkId,
       address,
       name,
       walletType: 'watching',
+      template,
     });
 
     await this.postAccountAdded({
@@ -686,6 +762,7 @@ class ServiceAccount extends ServiceBase {
     return { account, networkId };
   }
 
+  @backgroundMethod()
   async postAccountAdded({
     networkId,
     account,
@@ -785,39 +862,28 @@ class ServiceAccount extends ServiceBase {
     this.backgroundApi.serviceAccount.notifyAccountsChanged();
   }
 
-  @backgroundMethod()
-  async createHWWallet({
+  async createHwSingleWallet({
+    existDeviceId,
+    networkId,
+    wallets,
     features,
     avatar,
     connectId,
-    onlyPassphrase,
+    passphraseState,
   }: {
+    existDeviceId: string | undefined;
+    networkId: string;
+    wallets: Wallet[];
     features: IOneKeyDeviceFeatures;
     avatar?: Avatar;
     connectId: string;
-    onlyPassphrase?: boolean;
+    passphraseState?: string;
   }) {
-    const { dispatch, engine, serviceAccount, serviceHardware, appSelector } =
-      this.backgroundApi;
-    const devices = await engine.getHWDevices();
-    const networkId = appSelector((s) => s.general.activeNetworkId) || '';
-    const wallets: Wallet[] = appSelector((s) => s.runtime.wallets);
+    const { engine, serviceAccount } = this.backgroundApi;
+
     let wallet = null;
     let account = null;
-
-    const existDeviceId = devices.find(
-      (device) =>
-        device.mac === connectId && device.deviceId === features.device_id,
-    )?.id;
     let walletExistButNoAccount = null;
-
-    const passphraseState = await serviceHardware.getPassphraseState(connectId);
-    if (!!onlyPassphrase && !passphraseState) {
-      throw new DeviceNotOpenedPassphrase({
-        connectId,
-        deviceId: features.device_id ?? undefined,
-      });
-    }
 
     if (existDeviceId) {
       walletExistButNoAccount = wallets.find((w) => {
@@ -887,26 +953,156 @@ class ServiceAccount extends ServiceBase {
         }
       } catch (error) {
         // TODO need to handle this error
+        [account] = await engine.getAccounts(wallet.accounts);
       }
     }
 
-    const walletId = wallet?.id;
-    const accountId = account?.id;
+    return {
+      wallet,
+      accountId: account.id,
+    };
+  }
+
+  @backgroundMethod()
+  async createHWWallet({
+    features,
+    avatar,
+    connectId,
+    onlyPassphrase,
+  }: {
+    features: IOneKeyDeviceFeatures;
+    avatar?: Avatar;
+    connectId: string;
+    onlyPassphrase?: boolean;
+  }) {
+    const { dispatch, engine, serviceAccount, serviceHardware, appSelector } =
+      this.backgroundApi;
+    const devices = await engine.getHWDevices();
+    const networkId = appSelector((s) => s.general.activeNetworkId) || '';
+    const wallets: Wallet[] = appSelector((s) => s.runtime.wallets);
+
+    const networkImpl = getNetworkIdImpl(networkId);
+
+    const existDeviceId = devices.find(
+      (device) =>
+        device.mac === connectId && device.deviceId === features.device_id,
+    )?.id;
+
+    const useAda = networkImpl === IMPL_ADA;
+
+    const passphraseState = await serviceHardware.getPassphraseState(
+      connectId,
+      undefined,
+      useAda,
+    );
+    if (!!onlyPassphrase && !passphraseState) {
+      throw new DeviceNotOpenedPassphrase({
+        connectId,
+        deviceId: features.device_id ?? undefined,
+      });
+    }
+
+    let walletNormalExist: Wallet | undefined;
+    if (existDeviceId) {
+      walletNormalExist = wallets.find((w) => {
+        const targetWallet =
+          w.associatedDevice === existDeviceId && !isPassphraseWallet(w);
+
+        if (targetWallet) return true;
+        return false;
+      });
+    }
+
+    let result: {
+      wallet: Wallet | null;
+      accountId: string | null;
+    } | null = null;
+
+    if (!walletNormalExist) {
+      // await serviceHardware.getPassphraseState(connectId, true);
+      result = await this.createHwSingleWallet({
+        existDeviceId,
+        networkId,
+        wallets,
+        features,
+        avatar,
+        connectId,
+        passphraseState: undefined,
+      });
+    }
+
+    const actions = [];
+
+    if (passphraseState) {
+      let needTryRemember = false;
+      let hasError = false;
+      let walletId: string | undefined;
+      try {
+        result = await this.createHwSingleWallet({
+          existDeviceId,
+          networkId,
+          wallets,
+          features,
+          avatar,
+          connectId,
+          passphraseState,
+        });
+        needTryRemember = true;
+        walletId = result?.wallet?.id;
+      } catch (e: any) {
+        const { className, data } = e || {};
+        if (className === OneKeyErrorClassNames.OneKeyAlreadyExistWalletError) {
+          const { walletId: existsWalletId } = data || {};
+          needTryRemember = true;
+          walletId = existsWalletId;
+        }
+        hasError = true;
+        throw e;
+      } finally {
+        if (needTryRemember) {
+          const rememberWalletConnectId = appSelector(
+            (s) => s.hardware.pendingRememberWalletConnectId,
+          );
+          if (rememberWalletConnectId === connectId) {
+            if (walletId) actions.push(rememberPassphraseWallet(walletId));
+            actions.push(setPendingRememberWalletConnectId(undefined));
+          }
+          // Prevent accidental redux execution
+          if (actions.length > 2) {
+            debugLogger.common.warn(
+              '+++ Need to review the code, there may be an error here +++',
+            );
+          } else if (hasError) {
+            dispatch(...actions);
+          }
+        }
+      }
+    } else if (!passphraseState && walletNormalExist) {
+      serviceAccount.autoChangeAccount({
+        walletId: walletNormalExist.id ?? null,
+      });
+
+      throw new OneKeyAlreadyExistWalletError(
+        walletNormalExist.id,
+        walletNormalExist.name,
+      );
+    }
 
     const status: { boardingCompleted: boolean } = appSelector((s) => s.status);
-    const actions = [];
+
     if (!status.boardingCompleted) {
       actions.push(setBoardingCompleted());
     }
+
     dispatch(...actions, unlock(), release());
 
     await this.initWallets();
 
     serviceAccount.changeActiveAccount({
-      accountId: accountId ?? null,
-      walletId: walletId ?? null,
+      walletId: result?.wallet?.id ?? null,
+      accountId: result?.accountId ?? null,
     });
-    return wallet;
+    return result?.wallet;
   }
 
   @backgroundMethod()
@@ -923,6 +1119,57 @@ class ServiceAccount extends ServiceBase {
       return accounts[0]?.id ?? null;
     }
     return previousAccountId;
+  }
+
+  @backgroundMethod()
+  async removeWalletAndDevice(walletId: string, deviceId: string) {
+    timelinePerfTrace.mark({
+      name: ETimelinePerfNames.removeWallet,
+      title: 'ServiceAccount.removeWalletAndDevice >> start',
+    });
+
+    const { engine, appSelector } = this.backgroundApi;
+    const activeWalletId = appSelector((s) => s.general.activeWalletId);
+
+    const accounts = new Set<Account>();
+    const removeWalletIds = new Set<string>();
+
+    const pendingDelete = await engine.getWalletByDeviceId(deviceId);
+
+    if (pendingDelete) {
+      for (const wallet of pendingDelete) {
+        const pendingDeleteAccount = await engine.getAccounts(wallet.accounts);
+        pendingDeleteAccount.forEach((account) => accounts.add(account));
+
+        removeWalletIds.add(wallet.id);
+        await engine.removeWallet(wallet.id, '');
+        timelinePerfTrace.mark({
+          name: ETimelinePerfNames.removeWallet,
+          title: `ServiceAccount.removeWalletAndDevice >> engine.removeWallet  ${wallet.id}`,
+        });
+      }
+    }
+
+    timelinePerfTrace.mark({
+      name: ETimelinePerfNames.removeWallet,
+      title:
+        'ServiceAccount.removeWalletAndDevice >> engine.removeWallet  DONE',
+    });
+
+    setTimeout(
+      () =>
+        this.postWalletRemoved({
+          accounts: [...accounts],
+          activeWalletId,
+          removedWalletId: [...removeWalletIds],
+        }),
+      600,
+    );
+
+    timelinePerfTrace.mark({
+      name: ETimelinePerfNames.removeWallet,
+      title: 'ServiceAccount.removeWalletAndDevice >> end',
+    });
   }
 
   @backgroundMethod()
@@ -943,6 +1190,7 @@ class ServiceAccount extends ServiceBase {
     });
 
     await engine.removeWallet(walletId, password ?? '');
+    await engine.dbApi.removeAccountDerivationByWalletId({ walletId });
     timelinePerfTrace.mark({
       name: ETimelinePerfNames.removeWallet,
       title: 'ServiceAccount.removeWallet >> engine.removeWallet  DONE',
@@ -953,7 +1201,7 @@ class ServiceAccount extends ServiceBase {
         this.postWalletRemoved({
           accounts,
           activeWalletId,
-          removedWalletId: walletId,
+          removedWalletId: [walletId],
         }),
       600,
     );
@@ -971,7 +1219,7 @@ class ServiceAccount extends ServiceBase {
   }: {
     accounts: IAccount[];
     activeWalletId: string | undefined | null;
-    removedWalletId: string;
+    removedWalletId: string[];
   }) {
     const { serviceNotification, dispatch, serviceCloudBackup } =
       this.backgroundApi;
@@ -981,7 +1229,7 @@ class ServiceAccount extends ServiceBase {
       title: 'ServiceAccount.postWalletRemoved >> start =================== ',
     });
 
-    if (activeWalletId && activeWalletId === removedWalletId) {
+    if (activeWalletId && removedWalletId.includes(activeWalletId)) {
       // autoChangeWallet if remove current wallet
       // **** multiple dispatch cause UI reload performance issue
       await this.autoChangeWallet();
@@ -1009,7 +1257,14 @@ class ServiceAccount extends ServiceBase {
         'ServiceAccount.postWalletRemoved >> removeAccountDynamicBatch DONE',
     });
 
-    if (!removedWalletId.startsWith('hw')) {
+    let deleteIncludeSoftware = false;
+    removedWalletId.forEach((walletId) => {
+      if (!walletId.startsWith('hw')) {
+        deleteIncludeSoftware = true;
+        return false;
+      }
+    });
+    if (deleteIncludeSoftware) {
       // **** multiple dispatch cause UI reload performance issue
       serviceCloudBackup.requestBackup();
     }
@@ -1019,7 +1274,7 @@ class ServiceAccount extends ServiceBase {
     });
 
     // **** multiple dispatch cause UI reload performance issue
-    dispatch(setRefreshTS());
+    dispatch(setRefreshTS(), forgetPassphraseWallet(removedWalletId));
 
     await wait(10);
     timelinePerfTrace.mark({
@@ -1034,6 +1289,7 @@ class ServiceAccount extends ServiceBase {
     walletId: string,
     accountId: string,
     password: string | undefined,
+    networkId: string,
   ) {
     const {
       appSelector,
@@ -1052,8 +1308,12 @@ class ServiceAccount extends ServiceBase {
       });
     }
     const activeAccountId = appSelector((s) => s.general.activeAccountId);
-    await engine.removeAccount(accountId, password ?? '');
+    await engine.removeAccount(accountId, password ?? '', networkId);
     await simpleDb.walletConnect.removeAccount({ accountId });
+    await engine.dbApi.removeAccountDerivationByAccountId({
+      walletId,
+      accountId,
+    });
 
     const actions = [];
     if (activeAccountId === accountId) {
@@ -1123,10 +1383,9 @@ class ServiceAccount extends ServiceBase {
 
   @backgroundMethod()
   async getAccountByAddress({ address }: { address: string }) {
-    const { engine, appSelector } = this.backgroundApi;
-    const displayPassphraseWalletIdList = appSelector(
-      (s) => s.runtime.displayPassphraseWalletIdList,
-    );
+    const { engine } = this.backgroundApi;
+    const displayPassphraseWalletIdList =
+      this.getDisplayPassphraseWalletIdList();
     const wallets = await engine.getWallets({
       displayPassphraseWalletIds: displayPassphraseWalletIdList,
     });
@@ -1189,6 +1448,50 @@ class ServiceAccount extends ServiceBase {
     }
 
     dispatch(changeActiveExternalWalletName(activeExternalWalletName ?? ''));
+  }
+
+  @backgroundMethod()
+  async shouldChangeAccountWhenNetworkChanged({
+    previousNetwork,
+    newNetwork,
+    activeAccountId,
+  }: {
+    previousNetwork: Network | undefined;
+    newNetwork: Network | undefined;
+    activeAccountId: string | null;
+  }): Promise<{
+    shouldReloadAccountList: boolean;
+    shouldChangeActiveAccount: boolean;
+  }> {
+    if (!previousNetwork) {
+      return {
+        shouldReloadAccountList: false,
+        shouldChangeActiveAccount: false,
+      };
+    }
+    const { engine } = this.backgroundApi;
+    const vault = await engine.getChainOnlyVault(previousNetwork?.id);
+    return vault.shouldChangeAccountWhenNetworkChanged({
+      previousNetwork,
+      newNetwork,
+      activeAccountId,
+    });
+  }
+
+  @backgroundMethod()
+  async getAcccountAddressWithXpub(accountId: string, networkId: string) {
+    const { engine } = this.backgroundApi;
+    const account = await engine.dbApi.getAccount(accountId);
+    const vault = await engine.getVault({ networkId, accountId });
+    if (account.type === AccountType.UTXO) {
+      const xpub = await vault.getFetchBalanceAddress(account);
+      return { xpub, address: account.address };
+    }
+    if (account.type === AccountType.VARIANT) {
+      const address = await vault.addressFromBase(account);
+      return { address };
+    }
+    return { address: account.address };
   }
 }
 

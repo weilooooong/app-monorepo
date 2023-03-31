@@ -3,7 +3,7 @@ import type { FC, ReactNode } from 'react';
 import { BlurView } from 'expo-blur';
 import { Platform } from 'react-native';
 
-import { useIsVerticalLayout, useTheme } from '@onekeyhq/components';
+import { Box, useIsVerticalLayout, useTheme } from '@onekeyhq/components';
 
 import DesktopDragZoneBox from '../../DesktopDragZoneBox';
 import NavHeader from '../../NavHeader/NavHeader';
@@ -14,7 +14,8 @@ type HeaderProps = {
   headerLeft?: () => ReactNode;
   headerRight: () => ReactNode;
   showOnDesktop?: boolean;
-  title?: MessageDescriptor['id'];
+  i18nTitle?: MessageDescriptor['id'];
+  testID?: string;
 };
 
 const DEFAULT_HEADER_VERTICAL = 57;
@@ -24,7 +25,8 @@ const Header: FC<HeaderProps> = ({
   headerLeft,
   headerRight,
   showOnDesktop,
-  title,
+  i18nTitle,
+  testID,
 }) => {
   const isVerticalLayout = useIsVerticalLayout();
 
@@ -35,13 +37,14 @@ const Header: FC<HeaderProps> = ({
 
   const PrimaryComponent = (
     <DesktopDragZoneBox>
-      <NavHeader
-        enableBackButton={false}
-        style={{ height: headerHeight }}
-        headerLeft={headerLeft}
-        headerRight={headerRight}
-        title={title}
-      />
+      <Box testID={testID}>
+        <NavHeader
+          style={{ height: headerHeight }}
+          headerLeft={headerLeft}
+          headerRight={headerRight}
+          i18nTitle={i18nTitle}
+        />
+      </Box>
     </DesktopDragZoneBox>
   );
 

@@ -8,15 +8,25 @@ import memoizee from 'memoizee';
 import { TransactionStatus } from '@onekeyhq/engine/src/types/provider';
 import type { PartialTokenInfo } from '@onekeyhq/engine/src/types/provider';
 import { getTimeDurationMs } from '@onekeyhq/kit/src/utils/helper';
-import { COINTYPE_ADA } from '@onekeyhq/shared/src/engine/engineConsts';
+import {
+  COINTYPE_ADA,
+  IMPL_ADA,
+} from '@onekeyhq/shared/src/engine/engineConsts';
 import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
+import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import {
   InsufficientBalance,
   InvalidAddress,
   NotImplemented,
   OneKeyInternalError,
+  PreviousAccountIsEmpty,
 } from '../../../errors';
+import {
+  getDefaultPurpose,
+  getLastAccountId,
+} from '../../../managers/derivation';
+import { getAccountNameInfoByTemplate } from '../../../managers/impl';
 import { AccountType } from '../../../types/account';
 import {
   IDecodedTxActionType,
@@ -87,7 +97,9 @@ export default class Vault extends VaultBase {
   });
 
   override async getOutputAccount(): Promise<Account & { addresses: string }> {
-    const dbAccount = (await this.getDbAccount()) as DBUTXOAccount;
+    const dbAccount = (await this.getDbAccount({
+      noCache: true,
+    })) as DBUTXOAccount;
     return {
       id: dbAccount.id,
       name: dbAccount.name,
@@ -97,6 +109,7 @@ export default class Vault extends VaultBase {
       tokens: [],
       address: dbAccount.address,
       addresses: JSON.stringify(dbAccount.addresses),
+      template: dbAccount.template,
     };
   }
 
@@ -135,6 +148,33 @@ export default class Vault extends VaultBase {
       responseTime: Math.floor(performance.now() - start),
       latestBlock: result.height,
     };
+  }
+
+  override async validateCanCreateNextAccount(
+    walletId: string,
+    template: string,
+  ): Promise<boolean> {
+    const [wallet, network] = await Promise.all([
+      this.engine.getWallet(walletId),
+      this.engine.getNetwork(this.networkId),
+    ]);
+    const lastAccountId = getLastAccountId(wallet, network.impl, template);
+    if (!lastAccountId) return true;
+
+    const [lastAccount] = (await this.engine.dbApi.getAccounts([
+      lastAccountId,
+    ])) as DBUTXOAccount[];
+    if (typeof lastAccount !== 'undefined') {
+      const accountExisted = await this.checkAccountExistence(
+        lastAccount.address,
+      );
+      if (!accountExisted) {
+        const { label } = getAccountNameInfoByTemplate(network.impl, template);
+        throw new PreviousAccountIsEmpty(label as string);
+      }
+    }
+
+    return true;
   }
 
   override async checkAccountExistence(
@@ -717,8 +757,8 @@ export default class Vault extends VaultBase {
     );
   }
 
-  override getPrivateKeyByCredential(credential: string) {
-    return decodePrivateKeyByXprv(credential);
+  override async getPrivateKeyByCredential(credential: string) {
+    return Promise.resolve(decodePrivateKeyByXprv(credential));
   }
 
   private getStakeAddress = memoizee(

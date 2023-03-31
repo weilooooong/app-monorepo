@@ -1,21 +1,30 @@
 /* eslint-disable @typescript-eslint/no-use-before-define */
 import type { FC } from 'react';
 
-import { useNavigation } from '@react-navigation/core';
-
 import { IconButton, useIsVerticalLayout } from '@onekeyhq/components';
+import { getAppNavigation } from '@onekeyhq/kit/src/hooks/useAppNavigation';
+import { navigationShortcuts } from '@onekeyhq/kit/src/routes/navigationShortcuts';
 
-const HeaderBackButton: FC = () => {
-  const navigation = useNavigation();
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
+const HeaderBackButton: FC<{ navigation?: NativeStackNavigationProp<any> }> = ({
+  navigation = getAppNavigation(),
+}) => {
   const isVertical = useIsVerticalLayout();
-  return navigation.getState().routes.length > 0 ? (
+  return (
     <IconButton
       type="plain"
       size="lg"
       name={isVertical ? 'ArrowLeftOutline' : 'ArrowSmallLeftOutline'}
-      onPress={() => navigation.goBack()}
+      onPress={() => {
+        if (navigation?.canGoBack()) {
+          navigation?.goBack();
+        } else {
+          navigationShortcuts.navigateToHome();
+        }
+      }}
       circle
     />
-  ) : null;
+  );
 };
 export default HeaderBackButton;

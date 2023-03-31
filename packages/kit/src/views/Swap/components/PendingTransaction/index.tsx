@@ -4,6 +4,7 @@ import { useCallback, useEffect } from 'react';
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
 import { updateTransaction } from '../../../../store/reducers/swapTransactions';
 import { SwapQuoter } from '../../quoter';
+import { isSimpleTx } from '../../utils';
 
 import type { TransactionDetails } from '../../typings';
 
@@ -36,9 +37,9 @@ const PendingTransaction: FC<PendingTransactionProps> = ({
           const fromTokenIds = from.token.tokenIdOnNetwork
             ? [from.token.tokenIdOnNetwork]
             : [];
-          backgroundApiProxy.serviceToken.fetchTokenBalance({
-            activeAccountId: tx.accountId,
-            activeNetworkId: from.networkId,
+          backgroundApiProxy.serviceToken.getAccountTokenBalance({
+            accountId: tx.accountId,
+            networkId: from.networkId,
             tokenIds: fromTokenIds,
           });
           if (tx.receivingAddress) {
@@ -51,15 +52,16 @@ const PendingTransaction: FC<PendingTransactionProps> = ({
               const toTokenIds = to.token.tokenIdOnNetwork
                 ? [to.token.tokenIdOnNetwork]
                 : [];
-              backgroundApiProxy.serviceToken.fetchTokenBalance({
-                activeAccountId: receivingAccount.id,
-                activeNetworkId: to.networkId,
+              backgroundApiProxy.serviceToken.getAccountTokenBalance({
+                accountId: receivingAccount.id,
+                networkId: to.networkId,
                 tokenIds: toTokenIds,
               });
             }
           }
         }
       }
+      const { destinationTransactionHash } = progressRes;
       if (progressRes.destinationTransactionHash) {
         backgroundApiProxy.dispatch(
           updateTransaction({
@@ -73,6 +75,43 @@ const PendingTransaction: FC<PendingTransactionProps> = ({
           }),
         );
       }
+      if (status === 'sucesss') {
+        const txObj = { ...tx };
+        txObj.destinationTransactionHash = destinationTransactionHash;
+        const actualReceived = await SwapQuoter.client.getActualReceived(txObj);
+        backgroundApiProxy.dispatch(
+          updateTransaction({
+            accountId: tx.accountId,
+            networkId: tx.networkId,
+            hash: tx.hash,
+            transaction: {
+              actualReceived,
+            },
+          }),
+        );
+        const completedTime = await SwapQuoter.client.getTxCompletedTime(tx);
+        if (completedTime) {
+          backgroundApiProxy.dispatch(
+            updateTransaction({
+              accountId: tx.accountId,
+              networkId: tx.networkId,
+              hash: tx.hash,
+              transaction: { confirmedTime: Number(completedTime) },
+            }),
+          );
+        }
+        const networkFee = await SwapQuoter.client.getTxActualNetworkFee(tx);
+        if (networkFee) {
+          backgroundApiProxy.dispatch(
+            updateTransaction({
+              accountId: tx.accountId,
+              networkId: tx.networkId,
+              hash: tx.hash,
+              transaction: { networkFee },
+            }),
+          );
+        }
+      }
     }
     // eslint-disable-next-line
   }, []);
@@ -82,7 +121,7 @@ const PendingTransaction: FC<PendingTransactionProps> = ({
     if (stopInterval) {
       return;
     }
-    const ms = tx.quoterType !== '0x' ? 20 * 1000 : 5 * 1000;
+    const ms = isSimpleTx(tx) ? 5 * 1000 : 20 * 1000;
     const timer = setInterval(onQuery, ms);
     return () => {
       clearInterval(timer);

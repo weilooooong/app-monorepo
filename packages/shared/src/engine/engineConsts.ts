@@ -3,9 +3,11 @@ import { getTimeDurationMs } from '@onekeyhq/kit/src/utils/helper';
 import { OnekeyNetwork } from '../config/networkIds';
 
 const SEPERATOR = '--';
+const INDEX_PLACEHOLDER = '$$INDEX$$';
 
 const IMPL_EVM = 'evm';
 const COINTYPE_ETH = '60';
+const COINTYPE_ETC = '61';
 
 const IMPL_SOL = 'sol';
 const COINTYPE_SOL = '501';
@@ -61,6 +63,9 @@ const COINTYPE_FIL = '461';
 const IMPL_DOT = 'dot';
 const COINTYPE_DOT = '354';
 
+const IMPL_XMR = 'xmr';
+const COINTYPE_XMR = '128';
+
 const SUPPORTED_IMPLS = new Set([
   IMPL_EVM,
   IMPL_NEAR,
@@ -81,6 +86,7 @@ const SUPPORTED_IMPLS = new Set([
   IMPL_SUI,
   IMPL_FIL,
   IMPL_DOT,
+  IMPL_XMR,
 ]);
 
 const PRODUCTION_IMPLS = new Set([
@@ -103,6 +109,7 @@ const PRODUCTION_IMPLS = new Set([
   IMPL_SUI,
   IMPL_FIL,
   IMPL_DOT,
+  IMPL_XMR,
 ]);
 
 export const HISTORY_CONSTS = {
@@ -134,8 +141,10 @@ function getSupportedImpls() {
 
 export {
   SEPERATOR,
+  INDEX_PLACEHOLDER,
   IMPL_EVM,
   COINTYPE_ETH,
+  COINTYPE_ETC,
   IMPL_SOL,
   COINTYPE_SOL,
   IMPL_ALGO,
@@ -172,6 +181,8 @@ export {
   COINTYPE_FIL,
   IMPL_DOT,
   COINTYPE_DOT,
+  IMPL_XMR,
+  COINTYPE_XMR,
   getSupportedImpls,
 };
 
@@ -179,3 +190,8 @@ export {
 export const AUTO_SWITCH_DEFAULT_RPC_AT_VERSION = '3.21.0';
 
 export const PRICE_EXPIRED_TIME = getTimeDurationMs({ minute: 15 });
+
+export const ACCOUNT_DERIVATION_DB_MIGRATION_VERSION = '4.0.0';
+export const FIX_COSMOS_TEMPLATE_DB_MIGRATION_VERSION = '4.2.0';
+
+export const CHAINS_DISPLAYED_IN_DEV: string[] = [];

@@ -1,9 +1,4 @@
 import { deviceName, osName } from 'expo-device';
-import {
-  cacheDirectory,
-  deleteAsync,
-  writeAsStringAsync,
-} from 'expo-file-system';
 import { debounce } from 'lodash';
 import memoizee from 'memoizee';
 import uuid from 'react-native-uuid';
@@ -30,6 +25,7 @@ import {
   hasHardwareSupported,
   savePassword,
 } from '@onekeyhq/kit/src/utils/localAuthentication';
+import { parseCloudData } from '@onekeyhq/kit/src/views/Onboarding/screens/Migration/util';
 import {
   backgroundClass,
   backgroundMethod,
@@ -40,6 +36,7 @@ import {
   appEventBus,
 } from '@onekeyhq/shared/src/eventBus/appEventBus';
 import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
+import platformEnv from '@onekeyhq/shared/src/platformEnv';
 import { RestoreResult } from '@onekeyhq/shared/src/services/ServiceCloudBackup/ServiceCloudBackup.enums';
 import type {
   BackupedContacts,
@@ -66,6 +63,10 @@ function getContactUUID({
   return uuid.v5(`${networkId},${address}`, CONTACT_NAMESPACE) as string;
 }
 
+const RNFS: typeof import('react-native-fs') = platformEnv.isNative
+  ? require('react-native-fs')
+  : {};
+
 @backgroundClass()
 class ServiceCloudBackup extends ServiceBase {
   private backupUUID = '';
@@ -84,7 +85,9 @@ class ServiceCloudBackup extends ServiceBase {
   }
 
   private getTempFilePath(backupUUID: string) {
-    return `${cacheDirectory ?? ''}${this.getBackupFilename(backupUUID)}`;
+    return `${RNFS.DocumentDirectoryPath ?? ''}/${this.getBackupFilename(
+      backupUUID,
+    )}`;
   }
 
   private async ensureUUID() {
@@ -102,7 +105,7 @@ class ServiceCloudBackup extends ServiceBase {
       HDWallets: {},
     };
     const backupedContacts: BackupedContacts = {};
-
+    const { version } = this.backgroundApi.appSelector((s) => s.settings);
     const { contacts }: { contacts: Record<string, Contact> } =
       this.backgroundApi.appSelector((s) => s.contacts);
     Object.values(contacts).forEach((contact) => {
@@ -149,7 +152,9 @@ class ServiceCloudBackup extends ServiceBase {
     }
 
     return {
-      private: password
+      private: '{}',
+      public: '{}',
+      privateData: password
         ? encrypt(
             password,
             Buffer.from(
@@ -158,7 +163,8 @@ class ServiceCloudBackup extends ServiceBase {
             ),
           ).toString('base64')
         : '',
-      public: JSON.stringify(publicBackupData),
+      publicData: JSON.stringify(publicBackupData),
+      appVersion: version,
     };
   }
 
@@ -239,8 +245,9 @@ class ServiceCloudBackup extends ServiceBase {
       (tmpUUID) => tmpUUID !== currentUUID,
     )) {
       try {
-        const cloudData = JSON.parse(await this.getDataFromCloud(backupUUID));
-
+        const cloudData = parseCloudData(
+          JSON.parse(await this.getDataFromCloud(backupUUID)),
+        );
         const {
           backupTime,
           deviceInfo,
@@ -298,7 +305,7 @@ class ServiceCloudBackup extends ServiceBase {
 
     try {
       const localData = JSON.parse(
-        (await this.getDataForBackup('')).public,
+        (await this.getDataForBackup('')).publicData,
       ) as PublicBackupData;
 
       for (const [contactUUID, contact] of Object.entries(
@@ -364,11 +371,14 @@ class ServiceCloudBackup extends ServiceBase {
 
   @backgroundMethod()
   async getBackupDetails(backupUUID: string) {
-    const { public: publicBackupData } = JSON.parse(
-      await this.getDataFromCloud(backupUUID),
+    const { public: publicBackupData, appVersion } = parseCloudData(
+      JSON.parse(await this.getDataFromCloud(backupUUID)),
     );
     const remoteData = JSON.parse(publicBackupData) as PublicBackupData;
-    return this.getBackupDetailsWithRemoteData(remoteData);
+    return {
+      backupDetails: await this.getBackupDetailsWithRemoteData(remoteData),
+      appVersion,
+    };
   }
 
   @backgroundMethod()
@@ -475,8 +485,8 @@ class ServiceCloudBackup extends ServiceBase {
     localPassword: string;
     remotePassword?: string;
   }): Promise<RestoreResult> {
-    const { private: privateBackupData } = JSON.parse(
-      await this.getDataFromCloud(backupUUID),
+    const { private: privateBackupData } = parseCloudData(
+      JSON.parse(await this.getDataFromCloud(backupUUID)),
     );
     return this.restoreFromPrivateBackup({
       privateBackupData,
@@ -522,6 +532,11 @@ class ServiceCloudBackup extends ServiceBase {
     }
   }
 
+  @backgroundMethod()
+  async loginIfNeeded(showSignInDialog: boolean) {
+    return CloudFs.loginIfNeeded(showSignInDialog);
+  }
+
   private syncCloud = memoizee(async () => CloudFs.sync(), {
     promise: true,
     maxAge: 1000 * 30,
@@ -540,7 +555,11 @@ class ServiceCloudBackup extends ServiceBase {
 
   private getDataFromCloud = memoizee(
     (backupUUID: string) =>
-      CloudFs.downloadFromCloud(this.getBackupFilename(backupUUID)),
+      CloudFs.downloadFromCloud(
+        platformEnv.isNativeIOS
+          ? this.getBackupFilename(backupUUID)
+          : this.getBackupPath(backupUUID),
+      ),
     {
       promise: true,
       maxAge: 1000 * 30,
@@ -554,13 +573,13 @@ class ServiceCloudBackup extends ServiceBase {
       throw Error('Invalid backup uuid.');
     }
     const localTempFilePath = this.getTempFilePath(backupUUID);
-    await writeAsStringAsync(localTempFilePath, data);
+    await RNFS.writeFile(localTempFilePath, data, 'utf8');
     debugLogger.cloudBackup.debug(`Backup file ${localTempFilePath} written.`);
     await CloudFs.uploadToCloud(
       localTempFilePath,
       this.getBackupPath(backupUUID),
     );
-    await deleteAsync(localTempFilePath, { idempotent: true });
+    await RNFS.unlink(localTempFilePath);
     debugLogger.cloudBackup.debug(`Backup file ${localTempFilePath} deleted.`);
   }
 }

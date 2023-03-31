@@ -81,9 +81,9 @@ export const useTokenBalance = (token?: Token, accountId?: string) => {
   const balances = useCachedBalances(token?.networkId, accountId);
   useEffect(() => {
     if (token && accountId) {
-      backgroundApiProxy.serviceToken.fetchTokenBalance({
-        activeAccountId: accountId,
-        activeNetworkId: token.networkId,
+      backgroundApiProxy.serviceToken.getAccountTokenBalance({
+        accountId,
+        networkId: token.networkId,
         tokenIds: token.tokenIdOnNetwork ? [token.tokenIdOnNetwork] : [],
       });
     }
@@ -92,7 +92,7 @@ export const useTokenBalance = (token?: Token, accountId?: string) => {
     if (!token) {
       return undefined;
     }
-    return balances[getBalanceKey(token)]?.balance ?? '0';
+    return balances[getBalanceKey(token)]?.balance;
   }, [balances, token]);
 };
 

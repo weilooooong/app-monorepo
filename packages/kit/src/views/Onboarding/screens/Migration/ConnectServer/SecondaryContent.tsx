@@ -31,7 +31,7 @@ import { httpServerEnable } from '@onekeyhq/kit-bg/src/services/ServiceHTTP';
 import { MigrateNotificationNames } from '@onekeyhq/kit-bg/src/services/ServiceMigrate';
 import type { MigrateNotificationData } from '@onekeyhq/kit-bg/src/services/ServiceMigrate';
 import qrcodeLogo from '@onekeyhq/kit/assets/qrcode_logo.png';
-import { RootRoutes } from '@onekeyhq/kit/src/routes/types';
+import { RootRoutes } from '@onekeyhq/kit/src/routes/routesEnum';
 import {
   AppUIEventBusNames,
   appUIEventBus,
@@ -44,11 +44,13 @@ import { EOnboardingRoutes } from '../../../routes/enums';
 import {
   OneKeyMigrateQRCodePrefix,
   addressWithoutHttp,
+  parseCloudData,
   parseDeviceInfo,
 } from '../util';
 
 import { ServerStatus, useMigrateContext } from './context';
-import { ExportResult, useConnectServer, useExportData } from './hook';
+import { ExportResult, useExportData } from './hook';
+import { useConnectServer } from './hook.useConnectServer';
 import { showSendDataRequestModal } from './SendDataRequestModal';
 
 const QRCodeView: FC<{
@@ -79,7 +81,7 @@ const QRCodeView: FC<{
         const { postData, requestId } = data;
         try {
           if (typeof postData === 'string') {
-            const json = JSON.parse(postData) as MigrateData;
+            const json = parseCloudData(JSON.parse(postData)) as MigrateData;
             if (
               typeof json?.public === 'string' &&
               typeof json?.private === 'string'
@@ -98,11 +100,11 @@ const QRCodeView: FC<{
                 respondData: {
                   success: false,
                   data: undefined,
-                  message: 'can not fount public/private.',
+                  message: 'can not found public/private.',
                   code: MigrateErrorCode.DecryptFail,
                 },
               });
-              throw new Error(`can not fount public/private.`);
+              throw new Error(`can not found public/private.`);
             }
           } else {
             serviceHTTP.serverRespond({

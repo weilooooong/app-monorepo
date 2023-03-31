@@ -1,15 +1,16 @@
 import type { FC } from 'react';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useIntl } from 'react-intl';
 
 import {
-  Badge,
   Box,
   Divider,
+  HStack,
   Icon,
   IconButton,
   Pressable,
+  Spinner,
   Text,
   Typography,
   useIsVerticalLayout,
@@ -24,8 +25,8 @@ import {
   ModalRoutes,
   RootRoutes,
 } from '@onekeyhq/kit/src/routes/types';
-import { ManageTokenRoutes } from '@onekeyhq/kit/src/views/ManageTokens/types';
 
+import backgroundApiProxy from '../../../background/instance/backgroundApiProxy';
 import { FormatCurrencyNumber } from '../../../components/Format';
 import {
   useAccountTokens,
@@ -34,13 +35,15 @@ import {
 } from '../../../hooks';
 import { useActiveWalletAccount } from '../../../hooks/redux';
 import { useAccountTokenValues } from '../../../hooks/useTokens';
+import { ManageTokenModalRoutes } from '../../../routes/routesEnum';
 import { showHomeBalanceSettings } from '../../Overlay/HomeBalanceSettings';
+import { OverviewBadge } from '../../Overview/components/OverviewBadge';
 
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type NavigationProps = NativeStackNavigationProp<
   RootRoutesParams,
-  RootRoutes.Root
+  RootRoutes.Main
 > &
   NativeStackNavigationProp<HomeRoutesParams, HomeRoutes.FullTokenListScreen>;
 
@@ -87,7 +90,7 @@ const ListHeader: FC<{
             onPress={() =>
               navigation.navigate(RootRoutes.Modal, {
                 screen: ModalRoutes.ManageToken,
-                params: { screen: ManageTokenRoutes.Listing },
+                params: { screen: ManageTokenModalRoutes.Listing },
               })
             }
           />
@@ -179,9 +182,7 @@ const ListHeader: FC<{
             </Text>
           </Box>
         )}
-        {rate.isNaN() ? null : (
-          <Badge title={`${rate.toFixed(2)}%`} size="lg" ml="2" />
-        )}
+        {rate.isNaN() ? null : <OverviewBadge rate={rate} />}
         <Box ml="auto" flexDirection="row" alignItems="center">
           {tokenCountOrAddToken}
         </Box>
@@ -237,6 +238,8 @@ const AssetsListHeader: FC<{
   innerHeaderBorderColor,
 }) => {
   const intl = useIntl();
+  const isVertical = useIsVerticalLayout();
+  const [refreshing, setRefreshing] = useState(false);
   const navigation = useNavigation<NavigationProps>();
   const { network, wallet } = useActiveWalletAccount();
   const { tokenEnabled: networkTokenEnabled, activateTokenRequired } =
@@ -248,6 +251,34 @@ const AssetsListHeader: FC<{
     }
     return networkTokenEnabled;
   }, [activateTokenRequired, networkTokenEnabled, wallet?.type]);
+
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    backgroundApiProxy.serviceOverview.refreshCurrentAccount().finally(() => {
+      setTimeout(() => setRefreshing(false), 1000);
+    });
+  }, []);
+
+  const refreshButton = useMemo(() => {
+    if (isVertical) {
+      return;
+    }
+    return (
+      <Box alignItems="center" justifyContent="center" w="8" h="8" mr="3">
+        {refreshing ? (
+          <Spinner size="sm" />
+        ) : (
+          <IconButton
+            onPress={refresh}
+            size="sm"
+            name="ArrowPathMini"
+            type="plain"
+            ml="auto"
+          />
+        )}
+      </Box>
+    );
+  }, [isVertical, refreshing, refresh]);
 
   return (
     <>
@@ -262,12 +293,13 @@ const AssetsListHeader: FC<{
             {intl.formatMessage({ id: 'title__assets' })}
           </Typography.Heading>
           {tokenEnabled && (
-            <>
+            <HStack alignItems="center" justifyContent="flex-end">
+              {refreshButton}
               <IconButton
                 onPress={() =>
                   navigation.navigate(RootRoutes.Modal, {
                     screen: ModalRoutes.ManageToken,
-                    params: { screen: ManageTokenRoutes.Listing },
+                    params: { screen: ManageTokenModalRoutes.Listing },
                   })
                 }
                 size="sm"
@@ -283,7 +315,7 @@ const AssetsListHeader: FC<{
                 type="plain"
                 mr={-2}
               />
-            </>
+            </HStack>
           )}
         </Box>
       )}

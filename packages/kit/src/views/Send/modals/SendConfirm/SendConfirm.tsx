@@ -22,7 +22,7 @@ import { TxDetailView } from '../../../TxDetail/TxDetailView';
 import { BaseSendConfirmModal } from '../../components/BaseSendConfirmModal';
 import { FeeInfoInputForConfirmLite } from '../../components/FeeInfoInput';
 import { SendConfirmErrorsAlert } from '../../components/SendConfirmErrorsAlert';
-import { SendRoutes } from '../../types';
+import { SendModalRoutes } from '../../types';
 import {
   FEE_INFO_POLLING_INTERVAL,
   useFeeInfoPayload,
@@ -159,8 +159,8 @@ function SendConfirm({
       ) => {
         // refresh balance
         serviceToken.fetchAccountTokens({
-          activeAccountId: accountId,
-          activeNetworkId: networkId,
+          accountId,
+          networkId,
         });
         if (routeParams.signOnly) {
           // TODO Unified return to tx related processes to handle their own
@@ -192,7 +192,7 @@ function SendConfirm({
             accountId,
             closeModal: close,
           };
-          navigation.navigate(SendRoutes.HardwareSwapContinue, params);
+          navigation.navigate(SendModalRoutes.HardwareSwapContinue, params);
         } else {
           const type = routeParams.signOnly ? 'Sign' : 'Send';
           const params: SendFeedbackReceiptParams = {
@@ -204,7 +204,7 @@ function SendConfirm({
             onDetail: routeParams.onDetail,
             isSingleTransformMode: true,
           };
-          navigation.navigate(SendRoutes.SendFeedbackReceipt, params);
+          navigation.navigate(SendModalRoutes.SendFeedbackReceipt, params);
         }
 
         if (routeParams.onSuccess) {
@@ -239,12 +239,12 @@ function SendConfirm({
 
       if (result.success) {
         return navigation[nextRouteAction](
-          SendRoutes.SendAuthentication,
+          SendModalRoutes.SendAuthentication,
           nextRouteParams,
         );
       }
 
-      return navigation[nextRouteAction](SendRoutes.SendSpecialWarning, {
+      return navigation[nextRouteAction](SendModalRoutes.SendSpecialWarning, {
         ...nextRouteParams,
         hintMsgKey: result.key ?? '',
         hintMsgParams: result.params,

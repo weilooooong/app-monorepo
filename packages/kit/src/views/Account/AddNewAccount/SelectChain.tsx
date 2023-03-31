@@ -16,7 +16,7 @@ import type { Network } from '@onekeyhq/engine/src/types/network';
 import { useManageNetworks } from '@onekeyhq/kit/src/hooks';
 import { useRuntime } from '@onekeyhq/kit/src/hooks/redux';
 import type { CreateAccountRoutesParams } from '@onekeyhq/kit/src/routes';
-import { CreateAccountModalRoutes } from '@onekeyhq/kit/src/routes';
+import { CreateAccountModalRoutes } from '@onekeyhq/kit/src/routes/routesEnum';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
 
 import type { RouteProp } from '@react-navigation/native';
@@ -69,6 +69,11 @@ const RecoverSelectChainModal: FC = () => {
     return purpose;
   }
 
+  function getTemplate(network: Network) {
+    const { template } = network.accountNameInfo.default;
+    return template;
+  }
+
   const onSelectChain = useCallback(
     (network: Network) => {
       navigation.navigate(
@@ -77,11 +82,13 @@ const RecoverSelectChainModal: FC = () => {
           walletId: selectedWalletId,
           onDone: (password) => {
             const purpose = getPurpose(network);
+            const template = getTemplate(network);
             navigation.replace(CreateAccountModalRoutes.RecoverAccountsList, {
               purpose,
               walletId: selectedWalletId,
               network: network.id,
               password,
+              template,
             });
           },
         },

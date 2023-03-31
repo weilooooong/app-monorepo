@@ -14,7 +14,7 @@ import { Platform, StyleSheet } from 'react-native';
 import { useIsVerticalLayout, useThemeValue } from '@onekeyhq/components';
 
 import NavigationBar from '../../NavigationBar';
-import { getTabBarHeight } from '../../NavigationBar/Mobile';
+import { getTabBarHeight } from '../../NavigationBar/MobileBottomTabBar';
 import BottomTabBarHeightCallbackContext from '../utils/BottomTabBarHeightCallbackContext';
 import BottomTabBarHeightContext from '../utils/BottomTabBarHeightContext';
 
@@ -25,7 +25,6 @@ import type {
   BottomTabHeaderProps,
   BottomTabNavigationConfig,
   BottomTabNavigationHelpers,
-  TBottomBarFoldableItem,
 } from '../types';
 import type {
   ParamListBase,
@@ -36,7 +35,6 @@ type Props = BottomTabNavigationConfig & {
   state: TabNavigationState<ParamListBase>;
   navigation: BottomTabNavigationHelpers;
   descriptors: BottomTabDescriptorMap;
-  foldableList: TBottomBarFoldableItem[];
 };
 
 export default function BottomTabView(props: Props) {
@@ -75,10 +73,9 @@ export default function BottomTabView(props: Props) {
         navigation={navigation}
         state={state}
         descriptors={descriptors}
-        foldableList={props.foldableList}
       />
     ),
-    [descriptors, navigation, state, props.foldableList],
+    [descriptors, navigation, state],
   );
 
   const { routes } = state;
@@ -117,6 +114,8 @@ export default function BottomTabView(props: Props) {
             ),
           } = descriptor.options;
 
+          // @ts-ignore
+          // @ts-ignore
           return (
             <MaybeScreen
               key={route.key}

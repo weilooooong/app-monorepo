@@ -20,7 +20,7 @@ import platformEnv from '@onekeyhq/shared/src/platformEnv';
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
 import { useActiveSideAccount, useNetwork } from '../../../../hooks';
 import { useIsMounted } from '../../../../hooks/useIsMounted';
-import { SendRoutes } from '../../../../routes/routesEnum';
+import { SendModalRoutes } from '../../../../routes/routesEnum';
 import { ModalRoutes, RootRoutes } from '../../../../routes/types';
 
 import SelectNFTCard from './SelectNFTCard';
@@ -140,7 +140,7 @@ function SendButton({
     from: '',
     to: '',
     isNFT: true,
-    amount: item.amount ?? '1',
+    amount: item.selectAmount ?? '1',
     token: item.contractAddress ?? item.tokenAddress,
     tokenId: item.tokenId ?? item.tokenAddress,
     type: item.ercType,
@@ -155,7 +155,7 @@ function SendButton({
     navigation.navigate(RootRoutes.Modal, {
       screen: ModalRoutes.Send,
       params: {
-        screen: SendRoutes.PreSendAddress,
+        screen: SendModalRoutes.PreSendAddress,
         params,
       },
     });
@@ -205,7 +205,7 @@ function SendNFTList({
       collectibles
         .map((collection) => collection.assets)
         .flat()
-        .map((item) => ({ ...item, selected: false })),
+        .map((item) => ({ ...item, selected: false, selectAmount: '0' })),
     [collectibles],
   );
   const { serviceNFT } = backgroundApiProxy;

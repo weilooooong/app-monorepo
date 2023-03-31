@@ -8,7 +8,6 @@ import { StyleSheet } from 'react-native';
 
 import {
   Box,
-  Empty,
   HStack,
   Icon,
   KeyboardAvoidingView,
@@ -25,6 +24,10 @@ import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
 import { useManageNetworks } from '../../../../hooks';
+import {
+  NetworkListEmpty,
+  strIncludes,
+} from '../../../../views/ManageNetworks/Listing/NetworkListEmpty';
 import { ACCOUNT_SELECTOR_AUTO_SCROLL_DELAY_NETWORK } from '../../../Header/AccountSelectorChildren/accountSelectorConsts';
 import { AllNetwork } from '../../../Header/AccountSelectorChildren/RightChainSelector';
 import { RpcStatusButton } from '../../RpcStatusButton';
@@ -50,9 +53,6 @@ function ChainNetworkIcon({
     <Token size={8} token={{ logoURI: item.logoURI, name: item.shortName }} />
   );
 }
-
-const strIncludes = (a: string, b: string) =>
-  a.toLowerCase().includes(b.toLowerCase());
 
 function SideChainSelector({
   accountSelectorInfo,
@@ -91,50 +91,48 @@ function SideChainSelector({
     [networkImpl, enabledNetworks, search],
   );
 
-  const emptyComponent = useCallback(
-    () => (
-      <Empty
-        flex="1"
-        emoji="🔍"
-        title={intl.formatMessage({
-          id: 'content__no_results',
-          defaultMessage: 'No Result',
-        })}
-      />
-    ),
-    [intl],
-  );
   const isScrolledRef = useRef(false);
-  const scrollToItem = useCallback(() => {
-    if (
-      isScrolledRef.current ||
-      !enabledNetworks ||
-      !enabledNetworks.length ||
-      !selectedNetworkId
-    ) {
-      return;
-    }
+  const isScrollToIndexRetried = useRef(false);
+  const scrollToItem = useCallback(
+    ({ isRetry }: { isRetry?: boolean } = {}) => {
+      if (
+        isScrolledRef.current ||
+        !enabledNetworks ||
+        !enabledNetworks.length ||
+        !selectedNetworkId
+      ) {
+        return;
+      }
+      if (isRetry && isScrollToIndexRetried.current) {
+        return;
+      }
+      if (isRetry) {
+        isScrollToIndexRetried.current = true;
+      }
 
-    /* timeout required:
+      /* timeout required:
     scrollToIndex should be used in conjunction with getItemLayout or onScrollToIndexFailed, otherwise there is no way to know the location of offscreen indices or handle failures.
      */
-    setTimeout(() => {
-      try {
-        const index = enabledNetworks.findIndex(
-          (item) => item.id === selectedNetworkId,
-        );
-        if (index < 5) {
-          return;
+      setTimeout(() => {
+        try {
+          const index = enabledNetworks.findIndex(
+            (item) => item.id === selectedNetworkId,
+          );
+          if (index < 5) {
+            return;
+          }
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
+          flatListRef?.current?.scrollToIndex?.({ animated: false, index });
+          isScrolledRef.current = true;
+        } catch (error) {
+          debugLogger.common.error(error);
         }
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call,@typescript-eslint/no-unsafe-member-access
-        flatListRef?.current?.scrollToIndex?.({ animated: true, index });
-        isScrolledRef.current = true;
-      } catch (error) {
-        debugLogger.common.error(error);
-      }
-    }, 0);
-  }, [enabledNetworks, selectedNetworkId]);
+      }, 0);
+    },
+    [enabledNetworks, selectedNetworkId],
+  );
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const scrollToItemDebounced = useMemo(
     () =>
       debounce(scrollToItem, ACCOUNT_SELECTOR_AUTO_SCROLL_DELAY_NETWORK, {
@@ -182,7 +180,7 @@ function SideChainSelector({
               <ChainNetworkIcon
                 item={item}
                 isLastItem={isLastItem}
-                onLastItemRender={scrollToItemDebounced}
+                onLastItemRender={() => scrollToItem({ isRetry: false })}
               />
               {fullWidthMode ? (
                 <>
@@ -213,7 +211,7 @@ function SideChainSelector({
     [
       data.length,
       fullWidthMode,
-      scrollToItemDebounced,
+      scrollToItem,
       onPress,
       selectedNetworkId,
       serviceAccountSelector,
@@ -242,7 +240,8 @@ function SideChainSelector({
       ) : null}
       <KeyboardAvoidingView flex={1}>
         <FlatListRef
-          ListEmptyComponent={emptyComponent}
+          onScrollToIndexFailed={() => scrollToItem({ isRetry: true })}
+          ListEmptyComponent={NetworkListEmpty}
           initialNumToRender={20}
           // TODO auto scroll to active item
           ref={flatListRef}

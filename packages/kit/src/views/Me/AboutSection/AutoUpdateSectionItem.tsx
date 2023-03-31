@@ -14,10 +14,6 @@ import {
 } from '@onekeyhq/components';
 import backgroundApiProxy from '@onekeyhq/kit/src/background/instance/backgroundApiProxy';
 import { useAutoUpdate, useSettings } from '@onekeyhq/kit/src/hooks/redux';
-import {
-  available,
-  enable,
-} from '@onekeyhq/kit/src/store/reducers/autoUpdater';
 import { setUpdateSetting } from '@onekeyhq/kit/src/store/reducers/settings';
 import appUpdates from '@onekeyhq/kit/src/utils/updates/AppUpdates';
 import platformEnv from '@onekeyhq/shared/src/platformEnv';
@@ -42,16 +38,18 @@ const AutoUpdateSectionItem: FC = () => {
               id: 'msg__using_latest_release',
             }),
           });
-        } else {
-          dispatch(enable(), available(version));
         }
       })
       .catch(() => {})
       .finally(() => {});
-  }, [dispatch, intl]);
+  }, [intl]);
 
   useEffect(() => {
-    if (platformEnv.isDesktop && !platformEnv.isMas && state === 'available') {
+    if (
+      platformEnv.isDesktop &&
+      platformEnv.supportAutoUpdate &&
+      state === 'available'
+    ) {
       const { version = '0.0.0' } = (latest ?? {}) as DesktopVersion;
       if (appUpdates.skipVersionCheck(version)) {
         setShowAvailableBadge(false);
@@ -119,7 +117,7 @@ const AutoUpdateSectionItem: FC = () => {
           borderBottomColor="divider"
           onPress={() => {
             if (state === 'available') {
-              if (platformEnv.isNative || platformEnv.isMas) {
+              if (!platformEnv.supportAutoUpdate) {
                 // Narrowing type to VersionInfo
                 if (latest !== undefined && 'package' in latest) {
                   appUpdates.openAppUpdate(latest);
@@ -193,19 +191,19 @@ const AutoUpdateSectionItem: FC = () => {
     return null;
   }, [
     state,
-    progress,
-    intl,
     onCheckUpdate,
-    onDownloadUpdate,
-    onInstallUpdate,
+    intl,
     showAvailabelBadge,
     latest,
+    onDownloadUpdate,
+    onInstallUpdate,
+    progress.percent,
   ]);
 
   return (
     <>
       {Content}
-      {platformEnv.isDesktop && !platformEnv.isMas && (
+      {platformEnv.supportAutoUpdate && (
         <Pressable
           display="flex"
           flexDirection="row"

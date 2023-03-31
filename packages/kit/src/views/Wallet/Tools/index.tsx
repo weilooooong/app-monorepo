@@ -15,19 +15,17 @@ import {
   Pressable,
   Typography,
   VStack,
-  useUserDevice,
 } from '@onekeyhq/components';
 import { Tabs } from '@onekeyhq/components/src/CollapsibleTabView';
 import type { LocaleIds } from '@onekeyhq/components/src/locale';
 import type { ThemeToken } from '@onekeyhq/components/src/Provider/theme';
 import { batchTransferContractAddress } from '@onekeyhq/engine/src/presets/batchTransferContractAddress';
-import bg1 from '@onekeyhq/kit/assets/annual/tools_icon.jpg';
 import { useAppSelector } from '@onekeyhq/kit/src/hooks/redux';
+import { HomeRoutes, RootRoutes } from '@onekeyhq/kit/src/routes/routesEnum';
 import type {
   HomeRoutesParams,
   RootRoutesParams,
 } from '@onekeyhq/kit/src/routes/types';
-import { HomeRoutes, RootRoutes } from '@onekeyhq/kit/src/routes/types';
 import { IMPL_EVM } from '@onekeyhq/shared/src/engine/engineConsts';
 import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
@@ -53,14 +51,6 @@ type DataItem = {
 };
 
 const data: DataItem[] = [
-  {
-    key: 'annual',
-    icon: bg1,
-    iconBg: undefined,
-    title: 'title__my_on_chain_journey',
-    description: 'title__my_on_chain_journey_desc',
-    tag: 'content__time_limit',
-  },
   {
     key: 'revoke',
     icon: {
@@ -105,7 +95,7 @@ const data: DataItem[] = [
 
 type NavigationProps = NativeStackNavigationProp<
   RootRoutesParams,
-  RootRoutes.Root
+  RootRoutes.Main
 > &
   NativeStackNavigationProp<HomeRoutesParams, HomeRoutes.NFTPNLScreen> &
   NativeStackNavigationProp<HomeRoutesParams, HomeRoutes.Revoke>;
@@ -113,21 +103,12 @@ type NavigationProps = NativeStackNavigationProp<
 const ToolsPage: FC = () => {
   const intl = useIntl();
   const hasFetchedRef = useRef(false);
-  const { size } = useUserDevice();
   const { network, accountAddress } = useActiveWalletAccount();
   const isVertical = useIsVerticalOrMiddleLayout();
   const navigation = useNavigation<NavigationProps>();
   const homeTabName = useAppSelector((s) => s.status.homeTabName);
-  const annualReportEntryEnabled = useAppSelector(
-    (s) => s.settings?.annualReportEntryEnabled ?? false,
-  );
 
   const tools = useTools(network?.id);
-
-  const responsivePadding = useMemo(() => {
-    if (['NORMAL', 'LARGE'].includes(size)) return 32;
-    return 16;
-  }, [size]);
 
   const { openAddressDetails, hasAvailable } = useOpenBlockBrowser(network);
 
@@ -138,12 +119,6 @@ const ToolsPage: FC = () => {
     }
     if (network?.impl !== IMPL_EVM) {
       allItems = allItems.filter((n) => n.key !== 'revoke' && n.key !== 'pnl');
-    }
-    if (
-      !annualReportEntryEnabled ||
-      !(platformEnv.isNativeAndroid || platformEnv.isNativeIOSPhone)
-    ) {
-      allItems = allItems.filter((n) => n.key !== 'annual');
     }
 
     if (
@@ -178,17 +153,20 @@ const ToolsPage: FC = () => {
     network?.impl,
     network?.settings.supportBatchTransfer,
     network?.id,
-    annualReportEntryEnabled,
     tools,
   ]);
 
+  const params = useMemo(
+    () => ({
+      address: accountAddress,
+      networkId: network?.id,
+    }),
+    [accountAddress, network],
+  );
+
   const handlePress = useCallback(
     (key: string) => {
-      if (key === 'annual') {
-        navigation.navigate(RootRoutes.Root, {
-          screen: HomeRoutes.AnnualLoading,
-        });
-      } else if (key === 'revoke') {
+      if (key === 'revoke') {
         navigation.navigate(HomeRoutes.Revoke);
       } else if (key === 'explorer') {
         openAddressDetails(
@@ -200,7 +178,7 @@ const ToolsPage: FC = () => {
       } else if (key === 'bulkSender') {
         if (platformEnv.isExtFirefoxUiPopup) {
           backgroundApiProxy.serviceApp.openExtensionExpandTab({
-            routes: [RootRoutes.Root, HomeRoutes.BulkSender],
+            routes: [RootRoutes.Main, HomeRoutes.BulkSender],
           });
           setTimeout(() => {
             window.close();
@@ -211,13 +189,34 @@ const ToolsPage: FC = () => {
       } else {
         const item = tools?.find((t) => t.title === key);
         if (item) {
-          openUrl(item?.link, item?.title, {
+          // inject params
+          const url = item?.link?.replace(
+            /\{([\w\d]+)\}/g,
+            (_, name: keyof typeof params) => params[name] ?? '',
+          );
+          openUrl(url, item?.title, {
             modalMode: true,
           });
         }
       }
     },
-    [tools, navigation, openAddressDetails, accountAddress, intl],
+    [tools, navigation, openAddressDetails, accountAddress, intl, params],
+  );
+
+  const getItemPaddingx = useCallback(
+    (index: number) => {
+      if (isVertical) {
+        return {
+          paddingLeft: 0,
+          paddingRight: 0,
+        };
+      }
+      return {
+        paddingLeft: index % 2 === 0 ? 0 : 6,
+        paddingRight: index % 2 === 1 ? 0 : 6,
+      };
+    },
+    [isVertical],
   );
 
   const fetchData = useCallback(() => {
@@ -257,10 +256,15 @@ const ToolsPage: FC = () => {
       numColumns={isVertical ? undefined : 2}
       contentContainerStyle={{
         marginVertical: 24,
-        paddingHorizontal: responsivePadding,
+        paddingHorizontal: isVertical ? 32 : 16,
       }}
-      renderItem={({ item }) => (
-        <Box key={item.key} p="6px" width={isVertical ? '100%' : '50%'}>
+      renderItem={({ item, index }) => (
+        <Box
+          key={item.key}
+          p="6px"
+          width={isVertical ? '100%' : '50%'}
+          style={getItemPaddingx(index)}
+        >
           <Pressable
             flexDirection="row"
             p="16px"

@@ -10,7 +10,7 @@ import type { Wallet } from '@onekeyhq/engine/src/types/wallet';
 
 import {
   ModalRoutes,
-  ReceiveTokenRoutes,
+  ReceiveTokenModalRoutes,
   RootRoutes,
 } from '../routes/routesEnum';
 
@@ -30,22 +30,36 @@ export function useCopyAddress({
   const navigation = useNavigation();
 
   const copyAddress = useCallback(
-    (address?: string) => {
+    ({
+      address,
+      displayAddress,
+      template,
+      customPath,
+    }: {
+      address?: string;
+      displayAddress?: string;
+      template?: string;
+      customPath?: string;
+    }) => {
       if (isHwWallet) {
         navigation.navigate(RootRoutes.Modal, {
           screen: ModalRoutes.Receive,
           params: {
-            screen: ReceiveTokenRoutes.ReceiveToken,
+            screen: ReceiveTokenModalRoutes.ReceiveToken,
             params: {
+              address,
+              displayAddress,
               wallet,
               network,
               account,
+              template,
+              customPath,
             },
           },
         });
       } else {
-        if (!address) return;
-        copyToClipboard(address);
+        if (!displayAddress && !address) return;
+        copyToClipboard(displayAddress ?? address ?? '');
         ToastManager.show({
           title: intl.formatMessage({ id: 'msg__address_copied' }),
         });

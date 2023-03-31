@@ -5,13 +5,11 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { useNavigation } from '@react-navigation/core';
 import { useFocusEffect } from '@react-navigation/native';
-import { debounce } from 'lodash';
+import { debounce, pick } from 'lodash';
 import { useIntl } from 'react-intl';
 
 import {
   Badge,
-  Empty,
-  KeyboardDismissView,
   List,
   ListItem,
   Modal,
@@ -25,14 +23,16 @@ import type { Network } from '@onekeyhq/engine/src/types/network';
 import backgroundApiProxy from '../../../background/instance/backgroundApiProxy';
 import { getActiveWalletAccount } from '../../../hooks/redux';
 import { getManageNetworks } from '../../../hooks/useManageNetworks';
-import { ManageNetworkRoutes } from '../../../routes/Modal/ManageNetwork';
+import { ManageNetworkModalRoutes } from '../../../routes/routesEnum';
 
-import type { ManageNetworkRoutesParams } from '../../../routes/Modal/ManageNetwork';
+import { NetworkListEmpty, strIncludes } from './NetworkListEmpty';
+
+import type { ManageNetworkRoutesParams } from '../../../routes/Root/Modal/ManageNetwork';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type NavigationProps = NativeStackNavigationProp<
   ManageNetworkRoutesParams,
-  ManageNetworkRoutes.Listing
+  ManageNetworkModalRoutes.Listing
 >;
 
 const updateNetworks = debounce(
@@ -118,17 +118,25 @@ export const Listing: FC = () => {
 
   const data = useMemo(
     () =>
-      allNetworks.filter(
-        (d) =>
-          d.name.toLowerCase().includes(search.toLowerCase()) ||
-          d.shortName.toLowerCase().includes(search.toLowerCase()),
-      ),
+      allNetworks.filter((d) => {
+        for (const v of Object.values(
+          pick(d, 'name', 'shortName', 'id', 'symbol'),
+        )) {
+          if (strIncludes(String(v), search)) {
+            return true;
+          }
+        }
+        return false;
+      }),
     [allNetworks, search],
   );
 
   const onPress = useCallback(
     (network?: Network, mode: 'edit' | 'add' = 'add') => {
-      navigation.navigate(ManageNetworkRoutes.AddNetwork, { network, mode });
+      navigation.navigate(ManageNetworkModalRoutes.AddNetwork, {
+        network,
+        mode,
+      });
     },
     [navigation],
   );
@@ -149,22 +157,6 @@ export const Listing: FC = () => {
       setAllNetworks(getManageNetworks().allNetworks);
       setActiveNetwork(getActiveWalletAccount().network);
     }, []),
-  );
-
-  const emptyComponent = useCallback(
-    () => (
-      <KeyboardDismissView>
-        <Empty
-          flex="1"
-          emoji="🔍"
-          title={intl.formatMessage({
-            id: 'content__no_results',
-            defaultMessage: 'No Result',
-          })}
-        />
-      </KeyboardDismissView>
-    ),
-    [intl],
   );
 
   const renderItem = useCallback(
@@ -206,7 +198,7 @@ export const Listing: FC = () => {
         }}
         renderItem={renderItem}
         keyExtractor={(item) => item.id}
-        ListEmptyComponent={emptyComponent}
+        ListEmptyComponent={NetworkListEmpty}
       />
     </Modal>
   );

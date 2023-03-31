@@ -12,15 +12,15 @@ import { SkipAppLock } from '@onekeyhq/kit/src/components/AppLock';
 import Protected, {
   ValidationFields,
 } from '@onekeyhq/kit/src/components/Protected';
-import type {
-  CreateAccountModalRoutes,
-  CreateAccountRoutesParams,
-} from '@onekeyhq/kit/src/routes';
+import type { CreateAccountRoutesParams } from '@onekeyhq/kit/src/routes';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
 import { deviceUtils } from '@onekeyhq/kit/src/utils/hardware';
 import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
 import { toPlainErrorObject } from '@onekeyhq/shared/src/utils/errorUtils';
 
+import { wait } from '../../../utils/helper';
+
+import type { CreateAccountModalRoutes } from '../../../routes/routesEnum';
 import type { AdvancedValues, RecoverAccountType } from './types';
 import type { RouteProp } from '@react-navigation/native';
 
@@ -30,6 +30,7 @@ type RecoverConfirmDoneProps = {
   walletId: string;
   network: string;
   purpose: number;
+  template: string;
   config: AdvancedValues;
   stopFlag: boolean;
   onDone: () => void;
@@ -40,6 +41,7 @@ const RecoverConfirmDone: FC<RecoverConfirmDoneProps> = ({
   walletId,
   network,
   purpose,
+  template,
   config,
   stopFlag,
   onDone,
@@ -48,7 +50,7 @@ const RecoverConfirmDone: FC<RecoverConfirmDoneProps> = ({
   const [totalAccounts, setTotalAccounts] = useState(0);
   const [importedAccounts, setImportedAccounts] = useState(0);
 
-  const { serviceAccount, serviceAccountSelector } = backgroundApiProxy;
+  const { serviceAccount, serviceAccountSelector, engine } = backgroundApiProxy;
   const stopRecoverFlag = useRef(stopFlag);
 
   // Prevents screen locking
@@ -58,22 +60,37 @@ const RecoverConfirmDone: FC<RecoverConfirmDoneProps> = ({
     stopRecoverFlag.current = stopFlag;
   }, [stopFlag]);
 
-  const recoverAccountIndex = async (index: number[]) => {
+  const recoverAccountIndex = async (index: number[], lastGroup: boolean) => {
     debugLogger.common.info('recoverAccountIndex', JSON.stringify(index));
 
-    await serviceAccountSelector.preloadingCreateAccount({
-      walletId,
-      networkId: network,
-    });
-    return serviceAccount.addHDAccounts(
+    if (lastGroup) {
+      await serviceAccountSelector.preloadingCreateAccount({
+        walletId,
+        networkId: network,
+        template,
+      });
+
+      return serviceAccount.addHDAccounts(
+        password,
+        walletId,
+        network,
+        index,
+        undefined,
+        purpose,
+        true,
+        template,
+      );
+    }
+    return engine.addHdOrHwAccounts({
       password,
       walletId,
-      network,
-      index,
-      undefined,
+      networkId: network,
+      indexes: index,
+      names: undefined,
       purpose,
-      true,
-    );
+      skipRepeat: true,
+      template,
+    });
   };
 
   function filterUndefined(value: any): value is number {
@@ -117,19 +134,38 @@ const RecoverConfirmDone: FC<RecoverConfirmDoneProps> = ({
 
       setTotalAccounts(unAddedIndexes.length);
 
-      // Add every 20 accounts at a time
+      // Add every 10 accounts at a time
       while (unAddedIndexes.length > 0) {
         const indexes = unAddedIndexes.splice(
           0,
-          Math.min(unAddedIndexes.length, 20),
+          Math.min(unAddedIndexes.length, 10),
         );
-        const recoverAccounts = await recoverAccountIndex(indexes);
+        const isLastGroup = unAddedIndexes.length === 0;
+        const recoverAccounts = await recoverAccountIndex(indexes, isLastGroup);
         if (recoverAccounts?.[0]) {
           addedAccount = recoverAccounts?.[0];
         }
         setImportedAccounts((prev) => prev + (indexes?.length ?? 0));
 
-        if (stopRecoverFlag.current) break;
+        if (stopRecoverFlag.current) {
+          if (!isLastGroup && addedAccount) {
+            await serviceAccount.postAccountAdded({
+              walletId,
+              networkId: network,
+              account: addedAccount,
+              walletType: walletId.startsWith('hw-') ? 'hw' : 'hd',
+              checkOnBoarding: false,
+              checkPasswordSet: false,
+              shouldBackup: true,
+              password,
+            });
+          }
+          break;
+        }
+        if (!isLastGroup) {
+          // for response ui event
+          await wait(50);
+        }
       }
     } catch (e: any) {
       debugLogger.common.error('recover error:', toPlainErrorObject(e));
@@ -139,6 +175,7 @@ const RecoverConfirmDone: FC<RecoverConfirmDoneProps> = ({
         walletId,
         networkId: network,
         accountId: addedAccount?.id,
+        template,
       });
     }
 
@@ -146,7 +183,9 @@ const RecoverConfirmDone: FC<RecoverConfirmDoneProps> = ({
   };
 
   useEffect(() => {
-    authenticationDone(accounts);
+    setTimeout(() => {
+      authenticationDone(accounts);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -185,7 +224,8 @@ type NavigationProps = ModalScreenProps<CreateAccountRoutesParams>;
 
 const RecoverConfirm: FC = () => {
   const route = useRoute<RouteProps>();
-  const { accounts, walletId, network, purpose, config } = route.params;
+  const { accounts, walletId, network, purpose, config, template } =
+    route.params;
   const navigation = useNavigation<NavigationProps['navigation']>();
 
   const [stopFlag, setStopFlag] = useState(false);
@@ -218,7 +258,8 @@ const RecoverConfirm: FC = () => {
               walletId={walletId}
               network={network}
               purpose={purpose}
-              config={config}
+              template={template}
+              config={config as AdvancedValues}
               stopFlag={stopFlag}
               onDone={() => {
                 if (navigation?.canGoBack?.()) {

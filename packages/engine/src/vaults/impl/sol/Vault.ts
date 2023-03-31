@@ -20,7 +20,7 @@ import {
 import axios from 'axios';
 import BigNumber from 'bignumber.js';
 import bs58 from 'bs58';
-import { isArray, isEmpty } from 'lodash';
+import { isArray, isEmpty, omit } from 'lodash';
 import memoizee from 'memoizee';
 
 import { ed25519 } from '@onekeyhq/engine/src/secret/curves';
@@ -34,6 +34,7 @@ import {
   NotImplemented,
   OneKeyInternalError,
 } from '../../../errors';
+import { getAccountNameInfoByImpl } from '../../../managers/impl';
 import {
   createOutputActionFromNFTTransaction,
   getNFTTransactionHistory,
@@ -50,6 +51,7 @@ import { KeyringWatching } from './KeyringWatching';
 import settings from './settings';
 
 import type { DBSimpleAccount } from '../../../types/account';
+import type { AccountNameInfo } from '../../../types/network';
 import type { NFTTransaction } from '../../../types/nft';
 import type { KeyringSoftwareBase } from '../../keyring/KeyringSoftwareBase';
 import type {
@@ -94,7 +96,7 @@ export default class Vault extends VaultBase {
 
   // client: axios
   getApiExplorer() {
-    const baseURL = 'https://public-api.solscan.io/';
+    const baseURL = 'https://api.solscan.io/';
     return this.getApiExplorerCache(baseURL);
   }
 
@@ -815,7 +817,10 @@ export default class Vault extends VaultBase {
     let transfers: Array<{
       signature?: string[] | string;
       txHash?: string;
-      decimals: number;
+      decimals?: number;
+      change?: {
+        decimals: number;
+      };
     }> = [];
 
     if (network.isTestnet) {
@@ -827,22 +832,35 @@ export default class Vault extends VaultBase {
       // Get full on chain history (including NFT) by using solscan api
       // Does not support devnet
       const splTransfersRequest = ApiExplorer.get<{
-        data: { signature?: string[]; txHash?: string; decimals: number }[];
-      }>('/account/splTransfers', {
+        data: {
+          tx: {
+            transactions: {
+              txHash: string;
+              change: {
+                decimals: number;
+              };
+            }[];
+          };
+        };
+      }>('/account/soltransfer/txs', {
         params: {
-          account: dbAccount.address,
-          limit: 50,
-          cluster: network.isTestnet && 'devnet',
+          address: dbAccount.address,
+          offset: 0,
+          limit: 25,
         },
       });
 
       const solTransferRequest = ApiExplorer.get<{
-        data: { signature?: string[]; txHash?: string; decimals: number }[];
-      }>('/account/solTransfers', {
+        data: {
+          tx: {
+            transactions: { txHash: string; decimals?: number }[];
+          };
+        };
+      }>('/account/token/txs', {
         params: {
-          account: dbAccount.address,
-          limit: 50,
-          cluster: network.isTestnet && 'devnet',
+          address: dbAccount.address,
+          offset: 0,
+          limit: 25,
         },
       });
 
@@ -851,8 +869,8 @@ export default class Vault extends VaultBase {
         solTransferRequest,
       ]);
 
-      const splTransfers = splResp.data.data || [];
-      const solTransfers = solResl.data.data || [];
+      const splTransfers = splResp?.data?.data?.tx?.transactions || [];
+      const solTransfers = solResl?.data?.data?.tx?.transactions || [];
       transfers = [...splTransfers, ...solTransfers];
     }
 
@@ -865,7 +883,7 @@ export default class Vault extends VaultBase {
         'getTransaction',
         [
           txHash || (isArray(signature) ? signature[0] : signature),
-          { encoding: 'base58' },
+          { encoding: 'base58', maxSupportedTransactionVersion: 0 },
         ],
       ]),
     );
@@ -894,7 +912,11 @@ export default class Vault extends VaultBase {
 
       const nftTxs = nftMap[txid];
 
-      if (transferItem && transferItem.decimals === 0 && isEmpty(nftTxs)) {
+      if (
+        transferItem &&
+        (transferItem.decimals === 0 || transferItem.change?.decimals === 0) &&
+        isEmpty(nftTxs)
+      ) {
         isFinal = false;
       }
 
@@ -934,13 +956,13 @@ export default class Vault extends VaultBase {
     return (await Promise.all(promises)).filter(Boolean);
   }
 
-  override getPrivateKeyByCredential(credential: string) {
+  override async getPrivateKeyByCredential(credential: string) {
     let privateKey;
     const decodedPrivateKey = bs58.decode(credential);
     if (decodedPrivateKey.length === 64) {
       privateKey = decodedPrivateKey.slice(0, 32);
     }
-    return privateKey;
+    return Promise.resolve(privateKey);
   }
 
   async refreshRecentBlockBash(transaction: string): Promise<string> {
@@ -949,5 +971,21 @@ export default class Vault extends VaultBase {
     [, nativeTx.recentBlockhash] = await client.getFees();
 
     return bs58.encode(nativeTx.serialize({ requireAllSignatures: false }));
+  }
+
+  override async getAccountNameInfoMap(): Promise<
+    Record<string, AccountNameInfo>
+  > {
+    const isHwWallet = this.walletId.startsWith('hw');
+    const network = await this.getNetwork();
+    const accountNameInfo = getAccountNameInfoByImpl(network.impl);
+    if (isHwWallet || !this.walletId) {
+      return omit(accountNameInfo, 'ledgerLive');
+    }
+    return accountNameInfo;
+  }
+
+  override async canAutoCreateNextAccount(password: string): Promise<boolean> {
+    return Promise.resolve(true);
   }
 }

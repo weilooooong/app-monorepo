@@ -24,13 +24,20 @@ import {
   NotImplemented,
   PendingQueueTooLong,
 } from '../errors';
+import { getAccountNameInfoByImpl } from '../managers/impl';
 import { IMPL_MAPPINGS } from '../proxyUtils';
 
 import { IDecodedTxActionType, IDecodedTxDirection } from './types';
 import { VaultContext } from './VaultContext';
 
-import type { Account, DBAccount } from '../types/account';
+import type {
+  Account,
+  AccountCredentialType,
+  BtcForkChainUsedAccount,
+  DBAccount,
+} from '../types/account';
 import type { HistoryEntry, HistoryEntryStatus } from '../types/history';
+import type { AccountNameInfo, Network } from '../types/network';
 import type { WalletType } from '../types/wallet';
 import type { ethers } from './impl/evm/sdk/ethers';
 import type { IEncodedTxEvm } from './impl/evm/Vault';
@@ -108,6 +115,10 @@ export abstract class VaultBaseChainOnly extends VaultContext {
     tokenAddresses: string[],
   ): Promise<Array<PartialTokenInfo | undefined>>;
 
+  async getDisplayAddress(address: string): Promise<string> {
+    return Promise.resolve(address);
+  }
+
   async validateAddress(address: string): Promise<string> {
     const { normalizedAddress, isValid } =
       await this.engineProvider.verifyAddress(address);
@@ -142,12 +153,21 @@ export abstract class VaultBaseChainOnly extends VaultContext {
     return Promise.resolve(normalizedAddress);
   }
 
-  async checkAccountExistence(accountIdOnNetwork: string): Promise<boolean> {
+  async validateCanCreateNextAccount(walletId: string, template: string) {
+    return Promise.resolve(true);
+  }
+
+  async checkAccountExistence(
+    accountIdOnNetwork: string,
+    useAddress?: boolean,
+  ): Promise<boolean> {
     return Promise.resolve(true);
   }
 
   async getBalances(
     requests: Array<{ address: string; tokenAddress?: string }>,
+    password?: string,
+    passwordLoadedCallback?: (isLoaded: boolean) => void,
   ): Promise<Array<BigNumber | undefined>> {
     // Abstract requests
     const client = await this.engine.providerManager.getClient(this.networkId);
@@ -159,7 +179,9 @@ export abstract class VaultBaseChainOnly extends VaultContext {
     );
   }
 
-  async getFrozenBalance(): Promise<number | Record<string, number>> {
+  async getFrozenBalance(
+    password?: string,
+  ): Promise<number | Record<string, number>> {
     return 0;
   }
 
@@ -180,8 +202,47 @@ export abstract class VaultBaseChainOnly extends VaultContext {
     return false;
   }
 
+  async getAccountNameInfoMap(): Promise<Record<string, AccountNameInfo>> {
+    const network = await this.getNetwork();
+    return getAccountNameInfoByImpl(network.impl);
+  }
+
   async canAutoCreateNextAccount(password: string): Promise<boolean> {
-    return Promise.resolve(true);
+    return Promise.resolve(false);
+  }
+
+  async filterAccounts({
+    accounts,
+    networkId,
+  }: {
+    accounts: DBAccount[];
+    networkId: string;
+  }): Promise<DBAccount[]> {
+    return Promise.resolve(accounts);
+  }
+
+  async shouldChangeAccountWhenNetworkChanged({
+    previousNetwork,
+    newNetwork,
+    activeAccountId,
+  }: {
+    previousNetwork: Network | undefined;
+    newNetwork: Network | undefined;
+    activeAccountId: string | null;
+  }): Promise<{
+    shouldReloadAccountList: boolean;
+    shouldChangeActiveAccount: boolean;
+  }> {
+    return Promise.resolve({
+      shouldReloadAccountList: false,
+      shouldChangeActiveAccount: false,
+    });
+  }
+
+  async getAccountNameInfosByImportedOrWatchingCredential(
+    input: string,
+  ): Promise<AccountNameInfo[]> {
+    return Promise.resolve([]);
   }
 }
 
@@ -368,20 +429,31 @@ export abstract class VaultBase extends VaultBaseChainOnly {
       coinType: dbAccount.coinType,
       tokens: [],
       address: dbAccount.address,
+      template: dbAccount.template,
     };
   }
 
-  async getAccountBalance(tokenIds: Array<string>, withMain = true) {
+  async getAccountBalance(
+    tokenIds: Array<string>,
+    withMain = true,
+    password?: string,
+    passwordLoadedCallback?: (isLoaded: boolean) => void,
+  ) {
     const { address } = await this.getDbAccount();
     return this.getBalances(
       (withMain ? [{ address }] : []).concat(
         tokenIds.map((tokenAddress) => ({ address, tokenAddress })),
       ),
+      password,
+      passwordLoadedCallback,
     );
   }
 
   // TODO move to keyring
-  abstract getExportedCredential(password: string): Promise<string>;
+  abstract getExportedCredential(
+    password: string,
+    credentialType: AccountCredentialType,
+  ): Promise<string>;
 
   async updatePendingTxs(
     pendingTxs: Array<HistoryEntry>,
@@ -491,6 +563,16 @@ export abstract class VaultBase extends VaultBaseChainOnly {
     if (isSigner) {
       decodedTx.signer = address;
     }
+    if (signedTx?.txKey) {
+      if (decodedTx.extraInfo) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        decodedTx.extraInfo.txKey = signedTx.txKey;
+      } else {
+        decodedTx.extraInfo = {
+          txKey: signedTx.txKey,
+        };
+      }
+    }
     // TODO base.mergeDecodedTx with signedTx.rawTx
     // must include accountId here, so that two account wont share same tx history
     const historyId = `${this.networkId}_${txid}_${this.accountId}`;
@@ -517,6 +599,8 @@ export abstract class VaultBase extends VaultBaseChainOnly {
     // ""=NativeToken   "0x88836623"=Erc20Token    undefined=ALL
     tokenIdOnNetwork?: string;
     localHistory?: IHistoryTx[];
+    password?: string;
+    passwordLoadedCallback?: (isLoaded: boolean) => void;
   }): Promise<IHistoryTx[]> {
     throw new NotImplemented();
   }
@@ -620,10 +704,12 @@ export abstract class VaultBase extends VaultBaseChainOnly {
     return Promise.resolve(account.address);
   }
 
-  getPrivateKeyByCredential(credential: string): Buffer | undefined {
-    return Buffer.from(
-      credential.startsWith('0x') ? credential.slice(2) : credential,
-      'hex',
+  getPrivateKeyByCredential(credential: string): Promise<Buffer | undefined> {
+    return Promise.resolve(
+      Buffer.from(
+        credential.startsWith('0x') ? credential.slice(2) : credential,
+        'hex',
+      ),
     );
   }
 
@@ -637,5 +723,9 @@ export abstract class VaultBase extends VaultBaseChainOnly {
     params?: Record<string, any>;
   }> {
     return { success: true };
+  }
+
+  async getAllUsedAddress(): Promise<BtcForkChainUsedAccount[]> {
+    return Promise.resolve([]);
   }
 }

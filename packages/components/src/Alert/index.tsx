@@ -1,4 +1,4 @@
-import type { FC, ReactNode } from 'react';
+import type { ComponentProps, FC, ReactNode } from 'react';
 import { useState } from 'react';
 
 import { Box } from 'native-base';
@@ -17,13 +17,14 @@ type AlertType = 'info' | 'warn' | 'error' | 'success' | 'SeriousWarning';
 
 export type AlertProps = {
   title: string | ReactNode;
-  description?: string;
+  description?: string | ReactNode;
   alertType: AlertType;
   dismiss?: boolean;
   onDismiss?: () => void;
   action?: string;
   onAction?: () => void;
   customIconName?: ICON_NAMES;
+  containerProps?: ComponentProps<typeof Box>;
 };
 
 type AlertTypeProps = {
@@ -98,6 +99,7 @@ const Alert: FC<AlertProps> = ({
   action,
   onAction,
   customIconName,
+  containerProps,
 }) => {
   const alertTypeProps = alertPropWithType(alertType);
   const borderColor = useThemeValue(alertTypeProps.borderColor);
@@ -114,6 +116,7 @@ const Alert: FC<AlertProps> = ({
       borderRadius="12"
       borderWidth={StyleSheet.hairlineWidth}
       borderColor={borderColor}
+      {...containerProps}
     >
       <Box flex={1} flexDirection="row">
         <Box mr="8px">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FC } from 'react';
-
+import { useIsMounted } from '@onekeyhq/kit/src/hooks/useIsMounted';
 import type { SvgProps } from 'react-native-svg';
 
 import { useThemeValue } from '@onekeyhq/components';
@@ -15,15 +15,16 @@ export type IconProps = Omit<SvgProps, 'color'> & {
   color?: ThemeToken;
 };
 
-const Icon: FC<IconProps> = ({ name, size = 24, color }) => {
+const Icon: FC<IconProps> = ({ name, size = 24, color, width, height }) => {
   const defaultColor = useThemeValue('icon-default');
   const primaryColor = useThemeValue(color ?? 'icon-default');
   let SVGComponent = ICON_CONFIG[name];
   const [_, setRefreshKey] = useState(Math.random());
+  const isMounted = useIsMounted();
 
   useEffect(() => {
     // @ts-ignore
-    if (!SVGComponent.__ready) {
+    if (!SVGComponent?.__ready && SVGComponent) {
       SVGComponent().then((module) => {
         // @ts-ignore
         SVGComponent = module.default;
@@ -31,13 +32,17 @@ const Icon: FC<IconProps> = ({ name, size = 24, color }) => {
         SVGComponent.__ready = true;
         // @ts-ignore
         ICON_CONFIG[name] = SVGComponent;
-        setRefreshKey(Math.random());
+        if (isMounted) {
+          setRefreshKey(Math.random());
+        }
       });
     }
   }, [name]);
 
+  if(!SVGComponent) return null;
+
   // @ts-ignore
-  if (!SVGComponent.__ready) return null;
+  if (!SVGComponent?.__ready) return null;
 
   const svgColor = primaryColor || defaultColor;
 
@@ -45,8 +50,8 @@ const Icon: FC<IconProps> = ({ name, size = 24, color }) => {
     // @ts-ignore
     <SVGComponent
       // @ts-ignore
-      width={size ?? 'auto'}
-      height={size ?? 'auto'}
+      width={width ?? size ?? 'auto'}
+      height={height ?? size ?? 'auto'}
       color={svgColor}
     />
   );

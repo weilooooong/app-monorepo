@@ -16,8 +16,11 @@ import type { Network } from '@onekeyhq/engine/src/types/network';
 import type { Wallet } from '@onekeyhq/engine/src/types/wallet';
 import backgroundApiProxy from '@onekeyhq/kit/src/background/instance/backgroundApiProxy';
 import { useNavigation, useNavigationActions } from '@onekeyhq/kit/src/hooks';
-import { ManagerAccountModalRoutes } from '@onekeyhq/kit/src/routes/Modal/ManagerAccount';
-import { ModalRoutes, RootRoutes } from '@onekeyhq/kit/src/routes/types';
+import {
+  ManagerAccountModalRoutes,
+  ModalRoutes,
+  RootRoutes,
+} from '@onekeyhq/kit/src/routes/routesEnum';
 import AccountModifyNameDialog from '@onekeyhq/kit/src/views/ManagerAccount/ModifyAccount';
 import useRemoveAccountDialog from '@onekeyhq/kit/src/views/ManagerAccount/RemoveAccount';
 
@@ -70,7 +73,10 @@ const AccountSectionItem: FC<Props> = ({
     (value) => {
       switch (value) {
         case 'copy':
-          copyAddress(item.displayAddress ?? item.address);
+          copyAddress({
+            address: item.address,
+            displayAddress: item.displayAddress,
+          });
           break;
         case 'rename':
           DialogManager.show({
@@ -110,6 +116,7 @@ const AccountSectionItem: FC<Props> = ({
           goToRemoveAccount({
             wallet: activeWallet,
             accountId: item.id,
+            networkId: activeNetwork?.id ?? '',
             callback: () =>
               refreshAccounts(activeWallet?.id ?? '', activeNetwork?.id ?? ''),
           });

@@ -11,7 +11,11 @@ import {
   setUpdateFirmwareStep,
   updateDevicePassphraseOpenedState,
 } from '@onekeyhq/kit/src/store/reducers/hardware';
-import { setDeviceUpdates } from '@onekeyhq/kit/src/store/reducers/settings';
+import {
+  setDeviceUpdates,
+  setDeviceVersion,
+  setVerification,
+} from '@onekeyhq/kit/src/store/reducers/settings';
 import { deviceUtils } from '@onekeyhq/kit/src/utils/hardware';
 import {
   BridgeTimeoutError,
@@ -70,127 +74,129 @@ class ServiceHardware extends ServiceBase {
   featuresCache: Record<string, IOneKeyDeviceFeatures> = {};
 
   async getSDKInstance() {
-    return getHardwareSDKInstance().then(async (instance) => {
-      if (!this.registeredEvents) {
-        this.registeredEvents = true;
+    const { enable, preReleaseUpdate } =
+      this.backgroundApi.store.getState().settings.devMode || {};
 
-        const {
-          LOG_EVENT,
-          DEVICE,
-          FIRMWARE,
-          FIRMWARE_EVENT,
-          supportInputPinOnSoftware,
-        } = await CoreSDKLoader();
-        instance.on('UI_EVENT', (e) => {
-          const { type, payload } = e;
+    const isPreRelease = preReleaseUpdate && enable;
 
-          setTimeout(() => {
-            const { device, type: eventType, passphraseState } = payload || {};
-            const { deviceType, connectId, deviceId, features } = device || {};
-            const { bootloader_mode: bootLoaderMode } = features || {};
-            const inputPinOnSoftware = supportInputPinOnSoftware(features);
+    return getHardwareSDKInstance({ isPreRelease: isPreRelease ?? false }).then(
+      async (instance) => {
+        if (!this.registeredEvents) {
+          this.registeredEvents = true;
 
-            this.backgroundApi.dispatch(
-              setHardwarePopup({
-                uiRequest: type,
-                payload: {
-                  type: eventType,
-                  deviceType,
-                  deviceId,
-                  deviceConnectId: connectId,
-                  deviceBootLoaderMode: !!bootLoaderMode,
-                  passphraseState,
-                  supportInputPinOnSoftware: inputPinOnSoftware.support,
-                },
-              }),
-            );
-          }, 0);
-        });
+          const {
+            LOG_EVENT,
+            DEVICE,
+            FIRMWARE,
+            FIRMWARE_EVENT,
+            supportInputPinOnSoftware,
+          } = await CoreSDKLoader();
+          instance.on('UI_EVENT', (e) => {
+            const { type, payload } = e;
 
-        instance.on(LOG_EVENT, (messages: CoreMessage) => {
-          if (Array.isArray(messages?.payload)) {
-            debugLogger.hardwareSDK.info(messages.payload.join(' '));
-          }
-        });
+            setTimeout(() => {
+              const {
+                device,
+                type: eventType,
+                passphraseState,
+              } = payload || {};
+              const { deviceType, connectId, deviceId, features } =
+                device || {};
+              const { bootloader_mode: bootLoaderMode } = features || {};
+              const inputPinOnSoftware = supportInputPinOnSoftware(features);
 
-        instance.on(
-          DEVICE.FEATURES,
-          async (features: IOneKeyDeviceFeatures) => {
-            if (!features || !features.device_id) return;
+              this.backgroundApi.dispatch(
+                setHardwarePopup({
+                  uiRequest: type,
+                  payload: {
+                    type: eventType,
+                    deviceType,
+                    deviceId,
+                    deviceConnectId: connectId,
+                    deviceBootLoaderMode: !!bootLoaderMode,
+                    passphraseState,
+                    supportInputPinOnSoftware: inputPinOnSoftware.support,
+                  },
+                }),
+              );
+            }, 0);
+          });
 
-            try {
-              const device =
-                await this.backgroundApi.engine.getHWDeviceByDeviceId(
-                  features.device_id,
-                );
-              if (!device) return;
-
-              try {
-                const wallets = await this.backgroundApi.engine.getWallets();
-                const wallet = wallets.find(
-                  (w) =>
-                    w.associatedDevice === device.id && !isPassphraseWallet(w),
-                );
-                if (wallet) {
-                  this.featuresCache[wallet.id] = features;
-                  this.syncDeviceLabel(features, wallet.id);
-                }
-              } catch {
-                // ignore
-              }
-
-              try {
-                if (typeof features.passphrase_protection === 'boolean') {
-                  this.backgroundApi.dispatch(
-                    updateDevicePassphraseOpenedState({
-                      deviceId: device.id,
-                      opened: features.passphrase_protection,
-                    }),
-                  );
-                }
-              } catch {
-                // ignore
-              }
-            } catch {
-              // empty
+          instance.on(LOG_EVENT, (messages: CoreMessage) => {
+            if (Array.isArray(messages?.payload)) {
+              debugLogger.hardwareSDK.info(messages.payload.join(' '));
             }
-          },
-        );
+          });
 
-        instance.on(FIRMWARE_EVENT, (messages: CoreMessage) => {
-          if (messages.type === FIRMWARE.RELEASE_INFO) {
-            this._checkFirmwareUpdate(messages.payload as unknown as any);
-          }
-          if (messages.type === FIRMWARE.BLE_RELEASE_INFO) {
-            this._checkBleFirmwareUpdate(messages.payload as unknown as any);
-          }
-        });
+          instance.on(
+            DEVICE.FEATURES,
+            async (features: IOneKeyDeviceFeatures) => {
+              if (!features || !features.device_id) return;
 
-        instance.on(
-          DEVICE.SUPPORT_FEATURES,
-          (features: DeviceSupportFeaturesPayload) => {
-            this._checkDeviceSettings(features);
-          },
-        );
+              try {
+                const device =
+                  await this.backgroundApi.engine.getHWDeviceByDeviceId(
+                    features.device_id,
+                  );
+                if (!device) return;
 
-        instance.on(DEVICE.CONNECT, ({ device }: ConnectedEvent) => {
-          if (device.connectId) {
-            this.backgroundApi.dispatch(
-              addConnectedConnectId(device.connectId),
-            );
-          }
-        });
+                try {
+                  const wallets = await this.backgroundApi.engine.getWallets();
+                  const wallet = wallets.find(
+                    (w) =>
+                      w.associatedDevice === device.id &&
+                      !isPassphraseWallet(w),
+                  );
+                  if (wallet) {
+                    this.featuresCache[wallet.id] = features;
+                    this.syncDeviceLabel(features, wallet.id);
+                  }
+                } catch {
+                  // ignore
+                }
 
-        instance.on(DEVICE.DISCONNECT, ({ device }: ConnectedEvent) => {
-          if (device.connectId) {
-            this.backgroundApi.dispatch(
-              removeConnectedConnectId(device.connectId),
-            );
-          }
-        });
-      }
-      return instance;
-    });
+                this._checkPassphraseEnableStatus(device.id, features);
+              } catch {
+                // empty
+              }
+            },
+          );
+
+          instance.on(FIRMWARE_EVENT, (messages: CoreMessage) => {
+            if (messages.type === FIRMWARE.RELEASE_INFO) {
+              this._checkFirmwareUpdate(messages.payload as unknown as any);
+            }
+            if (messages.type === FIRMWARE.BLE_RELEASE_INFO) {
+              this._checkBleFirmwareUpdate(messages.payload as unknown as any);
+            }
+          });
+
+          instance.on(
+            DEVICE.SUPPORT_FEATURES,
+            (features: DeviceSupportFeaturesPayload) => {
+              this._checkDeviceSettings(features);
+            },
+          );
+
+          instance.on(DEVICE.CONNECT, ({ device }: ConnectedEvent) => {
+            if (device.connectId) {
+              this.backgroundApi.dispatch(
+                addConnectedConnectId(device.connectId),
+              );
+            }
+          });
+
+          instance.on(DEVICE.DISCONNECT, ({ device }: ConnectedEvent) => {
+            if (device.connectId) {
+              this.backgroundApi.dispatch(
+                removeConnectedConnectId(device.connectId),
+              );
+            }
+          });
+        }
+        return instance;
+      },
+    );
   }
 
   @backgroundMethod()
@@ -262,10 +268,22 @@ class ServiceHardware extends ServiceBase {
   }
 
   @backgroundMethod()
-  async getPassphraseState(connectId: string) {
+  async unlockDevice(connectId: string) {
+    // only unlock device when device is locked
+    return this.getPassphraseState(connectId, true);
+  }
+
+  @backgroundMethod()
+  async getPassphraseState(
+    connectId: string,
+    useEmptyPassphrase?: boolean,
+    deriveCardano?: boolean,
+  ) {
     const hardwareSDK = await this.getSDKInstance();
     const response = await hardwareSDK?.getPassphraseState(connectId, {
       initSession: true,
+      useEmptyPassphrase,
+      deriveCardano,
     });
 
     if (response.success) {
@@ -616,6 +634,24 @@ class ServiceHardware extends ServiceBase {
     }
   }
 
+  private _checkPassphraseEnableStatus(
+    deviceId: string,
+    features: IOneKeyDeviceFeatures,
+  ) {
+    try {
+      if (typeof features.passphrase_protection === 'boolean') {
+        this.backgroundApi.dispatch(
+          updateDevicePassphraseOpenedState({
+            deviceId,
+            opened: features.passphrase_protection,
+          }),
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   @backgroundMethod()
   async checkFirmwareUpdate(connectId: string) {
     const hardwareSDK = await this.getSDKInstance();
@@ -658,6 +694,7 @@ class ServiceHardware extends ServiceBase {
     switch (payload.status) {
       case 'required':
         hasFirmwareForce = true;
+        hasSysUpgrade = true;
         break;
       case 'valid':
       case 'none':
@@ -671,14 +708,15 @@ class ServiceHardware extends ServiceBase {
         break;
     }
 
+    const actions: any[] = [];
+
     // dev
     const settings = this.backgroundApi.appSelector((s) => s.settings) ?? {};
     const enable = settings?.devMode?.enable ?? false;
     const updateDeviceSys = settings?.devMode?.updateDeviceSys ?? false;
     const alwaysUpgrade = !!enable && !!updateDeviceSys;
 
-    const { dispatch } = this.backgroundApi;
-    dispatch(
+    actions.push(
       setDeviceUpdates({
         connectId,
         type: 'firmware',
@@ -688,6 +726,24 @@ class ServiceHardware extends ServiceBase {
         },
       }),
     );
+
+    // check device version and set verified
+    const currentVersion = settings?.hardware?.versions?.[connectId];
+    if (
+      currentVersion == null ||
+      payload.features?.onekey_version !== currentVersion
+    ) {
+      actions.push(
+        setDeviceVersion({
+          connectId,
+          version: payload.features?.onekey_version ?? '0.0.0',
+        }),
+      );
+      actions.push(setVerification({ connectId, verified: false }));
+    }
+
+    const { dispatch } = this.backgroundApi;
+    dispatch(...actions);
   }
 
   @backgroundMethod()
@@ -708,6 +764,7 @@ class ServiceHardware extends ServiceBase {
     switch (payload.status) {
       case 'required':
         hasBleForce = true;
+        hasBleUpgrade = true;
         break;
       case 'valid':
       case 'none':

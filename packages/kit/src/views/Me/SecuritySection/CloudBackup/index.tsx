@@ -16,6 +16,11 @@ import {
   Text,
   useIsVerticalLayout,
 } from '@onekeyhq/components';
+import {
+  backupPlatform,
+  logoutFromGoogleDrive,
+} from '@onekeyhq/shared/src/cloudfs';
+import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
 import { useNavigation } from '../../../../hooks';
@@ -36,7 +41,7 @@ import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 type NavigationProps = CompositeNavigationProp<
-  NativeStackNavigationProp<RootRoutesParams, RootRoutes.Root>,
+  NativeStackNavigationProp<RootRoutesParams, RootRoutes.Main>,
   NativeStackNavigationProp<
     HomeRoutesParams,
     HomeRoutes.CloudBackupPreviousBackups
@@ -84,10 +89,12 @@ const EnabledContent = ({
         footerButtonProps={{
           primaryActionTranslationId: 'action__disable',
           secondaryActionTranslationId: 'action__dismiss',
-          primaryActionProps: { type: 'destructive' },
-          onPrimaryActionPress: async () => {
-            await serviceCloudBackup.disableService();
-            onClose();
+          primaryActionProps: {
+            type: 'destructive',
+            onPromise: async () => {
+              await serviceCloudBackup.disableService();
+              onClose();
+            },
           },
         }}
         contentProps={{
@@ -96,11 +103,20 @@ const EnabledContent = ({
           title: intl.formatMessage({
             id: 'dialog__your_wallets_are_backed_up',
           }),
-          content: `${intl.formatMessage({
-            id: 'dialog__your_wallets_are_backed_up_desc',
-          })}\n\n${intl.formatMessage({
-            id: 'dialog__your_wallets_are_backed_up_desc_2',
-          })}`,
+          content: `${intl.formatMessage(
+            {
+              id: 'dialog__your_wallets_are_backed_up_desc',
+            },
+            {
+              'cloudName': backupPlatform().cloudName,
+              'platform': backupPlatform().platform,
+            },
+          )}\n\n${intl.formatMessage(
+            {
+              id: 'dialog__your_wallets_are_backed_up_desc_2',
+            },
+            { 'cloudName': backupPlatform().cloudName },
+          )}`,
         }}
       />
     ));
@@ -146,7 +162,10 @@ const DisabledContent = () => {
             {intl.formatMessage({ id: 'content__backup_disabled' })}
           </Text>
           <Text typography="Body2" color="text-subdued">
-            {intl.formatMessage({ id: 'content__backup_disabled_desc' })}
+            {intl.formatMessage(
+              { id: 'content__backup_disabled_desc' },
+              { 'cloudName': backupPlatform().cloudName },
+            )}
           </Text>
         </Box>
       </Box>
@@ -159,7 +178,10 @@ const DisabledContent = () => {
         alignSelf="center"
         w={{ base: 'full', sm: 'auto' }}
       >
-        {intl.formatMessage({ id: 'action__backup_to_icloud' })}
+        {intl.formatMessage(
+          { id: 'action__backup_to_icloud' },
+          { 'cloudName': backupPlatform().cloudName },
+        )}
       </Button>
     </Box>
   );
@@ -234,7 +256,7 @@ const CloudBackup = () => {
   return (
     <Wrapper>
       <Text typography="Heading" mb={4}>
-        iCloud
+        {backupPlatform().cloudName}
       </Text>
       {isAvailable ? (
         <Box>
@@ -259,9 +281,12 @@ const CloudBackup = () => {
         </Box>
       ) : (
         <Text typography="Body2" color="text-critical">
-          {intl.formatMessage({
-            id: 'content__log_in_icloud_to_enable_backup',
-          })}
+          {intl.formatMessage(
+            {
+              id: 'content__log_in_icloud_to_enable_backup',
+            },
+            { 'cloudName': backupPlatform().cloudName },
+          )}
         </Text>
       )}
       <Box w="full" py="6">
@@ -271,8 +296,33 @@ const CloudBackup = () => {
         />
       </Box>
       <Text typography="Body2" color="text-subdued">
-        {intl.formatMessage({ id: 'content__wont_backup' })}
+        {intl.formatMessage(
+          { id: 'content__wont_backup' },
+          { 'cloudName': backupPlatform().cloudName },
+        )}
       </Text>
+      <Text typography="Body2" color="text-subdued" />
+      {platformEnv.isNativeAndroid && (
+        <>
+          <Box w="full">
+            <Box
+              borderBottomWidth={StyleSheet.hairlineWidth}
+              borderBottomColor="divider"
+            />
+          </Box>
+          <Button
+            mt="6"
+            onPress={() => {
+              logoutFromGoogleDrive(false).then(() => {
+                navigation.goBack();
+              });
+            }}
+            size="xl"
+          >
+            {intl.formatMessage({ id: 'action__logout' })}
+          </Button>
+        </>
+      )}
     </Wrapper>
   );
 };

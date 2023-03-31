@@ -8,6 +8,7 @@ import type {
   IHistoryTx,
 } from '@onekeyhq/engine/src/vaults/types';
 import { IDecodedTxStatus } from '@onekeyhq/engine/src/vaults/types';
+import { setIsPasswordLoadedInVault } from '@onekeyhq/kit/src/store/reducers/data';
 import { refreshHistory } from '@onekeyhq/kit/src/store/reducers/refresher';
 import type {
   SendConfirmOnSuccessData,
@@ -69,12 +70,25 @@ class ServiceHistory extends ServiceBase {
     tokenIdOnNetwork?: string;
     localHistory?: IHistoryTx[];
   }) {
-    const { engine } = this.backgroundApi;
+    const { engine, servicePassword } = this.backgroundApi;
     const vault = await engine.getVault({ networkId, accountId });
+    const vaultSettings = await engine.getVaultSettings(networkId);
+
+    let password;
+    let passwordLoadedCallback;
+
+    if (vaultSettings.validationRequired) {
+      password = await servicePassword.getPassword();
+      passwordLoadedCallback = (isLoaded: boolean) =>
+        this.backgroundApi.dispatch(setIsPasswordLoadedInVault(isLoaded));
+    }
+
     return vault.fetchOnChainHistory({
       // TODO limit=50
       localHistory,
       tokenIdOnNetwork,
+      password,
+      passwordLoadedCallback,
     });
   }
 
@@ -439,10 +453,11 @@ class ServiceHistory extends ServiceBase {
     if (statusList.includes(IDecodedTxStatus.Failed)) {
       return 'failed';
     }
-    if (statusList.includes(IDecodedTxStatus.Pending)) {
-      return 'pending';
-    }
-    return 'canceled';
+    // In some cases, there may be no pending state. so we use pending as default tx status
+    // if (statusList.includes(IDecodedTxStatus.Pending)) {
+    //   return 'pending';
+    // }
+    return 'pending';
   }
 
   @backgroundMethod()
@@ -461,13 +476,16 @@ class ServiceHistory extends ServiceBase {
     if (!tx) {
       return 'failed';
     }
-    if (tx.decodedTx.status === IDecodedTxStatus.Pending) {
-      return 'pending';
-    }
     if (tx.decodedTx.status === IDecodedTxStatus.Confirmed) {
       return 'sucesss';
     }
-    return 'failed';
+    if (tx.decodedTx.status === IDecodedTxStatus.Failed) {
+      return 'failed';
+    }
+    if (tx.decodedTx.status === IDecodedTxStatus.Dropped) {
+      return 'canceled';
+    }
+    return 'pending';
   }
 
   @backgroundMethod()

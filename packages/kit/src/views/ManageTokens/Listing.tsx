@@ -21,8 +21,8 @@ import {
 } from '@onekeyhq/components';
 import { getBalanceKey } from '@onekeyhq/engine/src/managers/token';
 import type { Token } from '@onekeyhq/engine/src/types/token';
+import { TokenRiskLevel } from '@onekeyhq/engine/src/types/token';
 import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
-import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import backgroundApiProxy from '../../background/instance/backgroundApiProxy';
 import { FormatBalance } from '../../components/Format';
@@ -34,14 +34,15 @@ import {
   useNetworkTokens,
 } from '../../hooks';
 import { useSingleToken, useTokenBalance } from '../../hooks/useTokens';
+import { ManageTokenModalRoutes } from '../../routes/routesEnum';
 import { deviceUtils } from '../../utils/hardware';
 import { showOverlay } from '../../utils/overlayUtils';
 import { getTokenValue } from '../../utils/priceUtils';
 import { showHomeBalanceSettings } from '../Overlay/HomeBalanceSettings';
+import { showManageTokenListingTip } from '../Overlay/MangeTokenListing';
 
 import { notifyIfRiskToken } from './helpers/TokenSecurityModalWrapper';
 import { useSearchTokens } from './hooks';
-import { ManageTokenRoutes } from './types';
 
 import type { SimplifiedToken } from '../../store/reducers/tokens';
 import type { ManageTokenRoutesParams } from './types';
@@ -50,7 +51,7 @@ import type { ListRenderItem } from 'react-native';
 
 type NavigationProps = NativeStackNavigationProp<
   ManageTokenRoutesParams,
-  ManageTokenRoutes.Listing
+  ManageTokenModalRoutes.Listing
 >;
 
 const isValidateAddr = (addr: string) => addr.length === 42;
@@ -73,7 +74,7 @@ const HeaderTokenItem: FC<
 
   const onDetail = useCallback(
     (t: Token) => {
-      navigation.navigate(ManageTokenRoutes.ViewToken, {
+      navigation.navigate(ManageTokenModalRoutes.ViewToken, {
         ...t,
         decimal: t.decimals,
         source: t.source ?? '',
@@ -246,7 +247,7 @@ const ListEmptyComponent: FC<ListEmptyComponentProps> = ({
         if (isValidateAddr(terms)) {
           params.address = terms;
         }
-        navigation.navigate(ManageTokenRoutes.CustomToken, params);
+        navigation.navigate(ManageTokenModalRoutes.CustomToken, params);
       }}
     />
   ) : null;
@@ -266,6 +267,7 @@ const ListRenderToken: FC<ListRenderTokenProps> = ({ item }) => {
   const { walletId, accountId, networkId } = useActiveWalletAccount();
   const accountTokens = useAccountTokens(networkId, accountId);
   const hideSmallBalance = useAppSelector((s) => s.settings.hideSmallBalance);
+  const hideRiskTokens = useAppSelector((s) => s.settings.hideRiskTokens);
 
   const isOwned = accountTokens.some(
     (t) => item.tokenIdOnNetwork === t.tokenIdOnNetwork && !t.autoDetected,
@@ -279,7 +281,7 @@ const ListRenderToken: FC<ListRenderTokenProps> = ({ item }) => {
       return;
     }
     return new Promise((resolve, reject) => {
-      navigation.navigate(ManageTokenRoutes.ActivateToken, {
+      navigation.navigate(ManageTokenModalRoutes.ActivateToken, {
         walletId,
         accountId,
         networkId,
@@ -294,8 +296,59 @@ const ListRenderToken: FC<ListRenderTokenProps> = ({ item }) => {
     });
   }, [walletId, accountId, networkId, item.tokenIdOnNetwork, navigation]);
 
+  const checkTokenVisible = useCallback(async () => {
+    const options = {
+      title: intl.formatMessage(
+        { id: 'msg__str_has_been_added_but_is_hidden' },
+        { 0: item.symbol },
+      ),
+      content: '',
+    };
+    if (hideRiskTokens) {
+      if (item.riskLevel && item.riskLevel > TokenRiskLevel.WARN) {
+        options.content = intl.formatMessage(
+          { id: 'msg__str_has_been_added_but_is_hidden_desc' },
+          { 0: item.symbol },
+        );
+      }
+    }
+    if (hideSmallBalance) {
+      const { serviceToken, servicePrice } = backgroundApiProxy;
+      const [balances] = await serviceToken.getAccountBalanceFromRpc(
+        networkId,
+        accountId,
+        [item.tokenIdOnNetwork],
+        false,
+        {
+          [item.tokenIdOnNetwork]: item,
+        },
+      );
+      const price = await servicePrice.getSimpleTokenPrice({
+        networkId,
+        tokenId: item.tokenIdOnNetwork,
+      });
+      const value = getTokenValue({ token: item, price, balances });
+      if (value && value.isLessThan(1)) {
+        options.content = intl.formatMessage({
+          id: 'msg__token_has_been_added_but_is_hiddendesc_desc',
+        });
+      }
+    }
+    if (!options.content) {
+      return;
+    }
+    const close = showManageTokenListingTip({
+      ...options,
+      primaryActionTranslationId: 'action__show_it',
+      onPrimaryActionPress: () => {
+        close?.();
+        showHomeBalanceSettings();
+      },
+    });
+  }, [accountId, hideSmallBalance, hideRiskTokens, intl, item, networkId]);
+
   const onAddToken = useCallback(async () => {
-    const { engine, serviceToken, servicePrice } = backgroundApiProxy;
+    const { engine, serviceToken } = backgroundApiProxy;
     try {
       await checkIfShouldActiveToken();
       await engine.quickAddToken(
@@ -311,51 +364,20 @@ const ListRenderToken: FC<ListRenderTokenProps> = ({ item }) => {
       return;
     }
     await serviceToken.fetchAccountTokens({
-      activeAccountId: accountId,
-      activeNetworkId: networkId,
+      accountId,
+      networkId,
     });
-    if (hideSmallBalance) {
-      const [balances] = await serviceToken.fetchTokenBalance({
-        activeAccountId: accountId,
-        activeNetworkId: networkId,
-        tokenIds: [item.tokenIdOnNetwork],
-      });
-      const price = await servicePrice.getSimpleTokenPrice({
-        networkId,
-        tokenId: item.tokenIdOnNetwork,
-      });
-      const value = getTokenValue({ token: item, price, balances });
-      if (value && value.isLessThan(1)) {
-        ToastManager.show(
-          {
-            title: intl.formatMessage({
-              id: 'msg__token_has_been_added_but_is_hidden',
-            }),
-          },
-          platformEnv.isNativeAndroid
-            ? undefined
-            : {
-                type: 'action',
-                text2: intl.formatMessage({
-                  id: 'action__go_to_setting',
-                }),
-                onPress: showHomeBalanceSettings,
-              },
-        );
-        return;
-      }
-    }
+    await checkTokenVisible();
     ToastManager.show({
       title: intl.formatMessage({ id: 'msg__token_added' }),
     });
   }, [
     accountId,
     networkId,
-    hideSmallBalance,
-
     intl,
     checkIfShouldActiveToken,
     item,
+    checkTokenVisible,
   ]);
 
   const onPress = useCallback(async () => {
@@ -372,8 +394,8 @@ const ListRenderToken: FC<ListRenderTokenProps> = ({ item }) => {
 
   const onDetail = useCallback(() => {
     const routeName = isOwned
-      ? ManageTokenRoutes.ViewToken
-      : ManageTokenRoutes.AddToken;
+      ? ManageTokenModalRoutes.ViewToken
+      : ManageTokenModalRoutes.AddToken;
     navigation.navigate(routeName, {
       name: item.name,
       symbol: item.symbol,
@@ -499,7 +521,7 @@ export const ListingModal: FC<ListingModalProps> = ({
       headerDescription={activeNetwork?.shortName}
       hidePrimaryAction
       onSecondaryActionPress={() => {
-        navigation.navigate(ManageTokenRoutes.CustomToken);
+        navigation.navigate(ManageTokenModalRoutes.CustomToken);
       }}
       secondaryActionProps={{ type: 'basic', leftIconName: 'PlusOutline' }}
       secondaryActionTranslationId="action__add_custom_tokens"
@@ -555,8 +577,8 @@ export const Listing: FC = () => {
                   );
                 }
                 await backgroundApiProxy.serviceToken.fetchAccountTokens({
-                  activeAccountId: accountId,
-                  activeNetworkId: networkId,
+                  accountId,
+                  networkId,
                 });
                 closeOverlay();
               },

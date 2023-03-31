@@ -88,6 +88,12 @@ export class ConnectTimeoutError extends OneKeyHardwareError {
   override key: LocaleIds = 'msg__hardware_polling_connect_timeout_error';
 }
 
+export class ConnectPollingStopError extends OneKeyHardwareError {
+  override code = HardwareErrorCode.PollingStop;
+
+  override key: LocaleIds = 'msg__hardware_polling_connect_timeout_error';
+}
+
 // 设备没有配对成功
 export class DeviceNotBonded extends OneKeyHardwareError {
   override code = HardwareErrorCode.BleDeviceNotBonded;
@@ -193,6 +199,12 @@ export class NewFirmwareUnRelease extends OneKeyHardwareError {
   override key: LocaleIds = 'msg__str_not_supported_by_hardware_wallets';
 }
 
+export class NewFirmwareForceUpdate extends OneKeyHardwareError {
+  override code = HardwareErrorCode.NewFirmwareForceUpdate;
+
+  override key: LocaleIds = 'msg__need_force_upgrade_firmware';
+}
+
 export class DeviceNotSame extends OneKeyHardwareError {
   override code = HardwareErrorCode.DeviceCheckDeviceIdError;
 
@@ -241,6 +253,19 @@ export class FileAlreadyExistError extends OneKeyHardwareError {
   override code = HardwareErrorCode.FileAlreadyExists;
 
   override key: LocaleIds = 'msg__file_already_exists';
+}
+
+export class IncompleteFileError extends OneKeyHardwareError {
+  override code = HardwareErrorCode.CheckDownloadFileError;
+
+  override key: LocaleIds = 'msg__incomplete_file';
+}
+
+export class NotInSigningModeError extends OneKeyHardwareError {
+  override code = HardwareErrorCode.NotInSigningMode;
+
+  override key: LocaleIds =
+    'msg__transaction_signing_error_not_in_signing_mode';
 }
 
 // 未知错误

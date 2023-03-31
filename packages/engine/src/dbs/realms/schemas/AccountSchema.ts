@@ -25,13 +25,19 @@ class AccountSchema extends Realm.Object {
 
   public xpub?: string;
 
+  public xpubSegwit?: string;
+
   public address?: string;
 
   public addresses?: Realm.Dictionary<string>;
 
+  public customAddresses?: Realm.Dictionary<string>;
+
   public tokens?: Realm.Set<TokenSchema>;
 
   public assignee!: Realm.Results<WalletSchema>;
+
+  public template?: string;
 
   public static schema: Realm.ObjectSchema = {
     name: 'Account',
@@ -44,14 +50,21 @@ class AccountSchema extends Realm.Object {
       coinType: 'string',
       pub: 'string?',
       xpub: 'string?',
+      xpubSegwit: 'string?',
       address: 'string?',
       addresses: { type: 'dictionary', default: {}, objectType: 'string' },
+      customAddresses: {
+        type: 'dictionary',
+        default: {},
+        objectType: 'string',
+      },
       tokens: { type: 'Token<>', default: [] },
       assignee: {
         type: 'linkingObjects',
         objectType: 'Wallet',
         property: 'accounts',
       },
+      template: 'string?',
     },
   };
 
@@ -63,6 +76,7 @@ class AccountSchema extends Realm.Object {
       path: this.path || '',
       coinType: this.coinType,
       address: this.address || '',
+      template: this.template || '',
     } as DBAccount;
     if (this.type === AccountType.SIMPLE) {
       (ret as DBSimpleAccount).pub = this.pub || '';
@@ -71,7 +85,9 @@ class AccountSchema extends Realm.Object {
       (ret as DBVariantAccount).addresses = this.addresses || {};
     } else if (this.type === AccountType.UTXO) {
       (ret as DBUTXOAccount).xpub = this.xpub || '';
+      (ret as DBUTXOAccount).xpubSegwit = this.xpubSegwit || '';
       (ret as DBUTXOAccount).addresses = this.addresses || {};
+      (ret as DBUTXOAccount).customAddresses = this.customAddresses || {};
     }
     return ret;
   }

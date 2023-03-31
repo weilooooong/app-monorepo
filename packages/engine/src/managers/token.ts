@@ -117,6 +117,7 @@ export const checkTokenUpdate = async (timestamp: number): Promise<boolean> =>
     false,
   );
 
+// fetch top 2000 tokens of network
 export const fetchOnlineTokens = async (
   params: TokenQuery,
 ): Promise<ServerToken[]> => {
@@ -158,7 +159,7 @@ export const fetchTokenDetail = async (
 
 export const fetchTools = async (): Promise<Tool[]> => {
   const res = await fetchData<{ data: Tool[] }>(
-    '/config/tools',
+    '/config/tools/v2',
     {},
     { data: [] },
   );

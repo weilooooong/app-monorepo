@@ -15,10 +15,10 @@ import {
 import { StyleSheet } from 'react-native';
 
 import { usePrevious } from '@onekeyhq/kit/src/hooks';
-import { enableHaptics } from '@onekeyhq/shared/src/haptics';
+import { doHapticsWhenEnabled } from '@onekeyhq/shared/src/haptics';
 
+import Center from '../Box';
 import Icon from '../Icon';
-import useProviderValue from '../Provider/hooks/useProviderValue';
 import { Spinner } from '../Spinner';
 import { getTypographyStyleProps } from '../Typography';
 
@@ -542,7 +542,19 @@ const Button = forwardRef<
         }
       }
     }, [leftIconName, rightIconName, size]);
-    const spinner = useMemo(() => <Spinner size="sm" />, []);
+    const spinnerContainerSize = useMemo(() => {
+      if (size === 'xs') return '16px';
+      if (size === 'sm' || size === 'base') return '20px';
+      return '24px';
+    }, [size]);
+    const spinner = useMemo(
+      () => (
+        <Center size={spinnerContainerSize}>
+          <Spinner size="sm" />
+        </Center>
+      ),
+      [spinnerContainerSize],
+    );
     return (
       <Component
         ref={ref}
@@ -574,11 +586,8 @@ const OkButton = forwardRef<
   const [loading, setLoading] = useState(isLoading);
   // Handling when isLoading and onPromise are present at the same time
   const prevLoadingState = usePrevious<boolean | undefined>(loading);
-  const { hapticsEnabled } = useProviderValue();
   const handlePress = useCallback(() => {
-    if (hapticsEnabled) {
-      enableHaptics();
-    }
+    doHapticsWhenEnabled();
     if (onPromise && typeof isLoading === 'undefined') {
       setLoading(true);
       setTimeout(() => {
@@ -591,7 +600,7 @@ const OkButton = forwardRef<
     } else if (onPress) {
       onPress?.();
     }
-  }, [hapticsEnabled, onPromise, isLoading, onPress]);
+  }, [onPromise, isLoading, onPress]);
   useEffect(() => {
     if (
       typeof isLoading !== 'undefined' ||

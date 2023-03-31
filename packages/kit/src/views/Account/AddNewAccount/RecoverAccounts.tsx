@@ -11,6 +11,7 @@ import {
   Center,
   CheckBox,
   Empty,
+  Form,
   HStack,
   IconButton,
   List,
@@ -18,27 +19,43 @@ import {
   Modal,
   Spinner,
   Text,
+  Token,
   Typography,
+  useForm,
 } from '@onekeyhq/components';
+import Pressable from '@onekeyhq/components/src/Pressable/Pressable';
 import { shortenAddress } from '@onekeyhq/components/src/utils';
+import { isBtcLikeImpl } from '@onekeyhq/engine/src/managers/impl';
 import type {
   Account,
   ImportableHDAccount,
 } from '@onekeyhq/engine/src/types/account';
+import type { Network } from '@onekeyhq/engine/src/types/network';
 import backgroundApiProxy from '@onekeyhq/kit/src/background/instance/backgroundApiProxy';
+import showDerivationPathBottomSheetModal from '@onekeyhq/kit/src/components/NetworkAccountSelector/modals/NetworkAccountSelectorModal/DerivationPathBottomSheetModal';
 import { useRuntime } from '@onekeyhq/kit/src/hooks/redux';
-import useOpenBlockBrowser from '@onekeyhq/kit/src/hooks/useOpenBlockBrowser';
 import type { CreateAccountRoutesParams } from '@onekeyhq/kit/src/routes';
-import { CreateAccountModalRoutes } from '@onekeyhq/kit/src/routes';
+import {
+  CreateAccountModalRoutes,
+  ModalRoutes,
+  RootRoutes,
+} from '@onekeyhq/kit/src/routes/routesEnum';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
 import { getTimeStamp } from '@onekeyhq/kit/src/utils/helper';
 import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import { FormatBalance } from '../../../components/Format';
+import { useDerivationPath } from '../../../components/NetworkAccountSelector/hooks/useDerivationPath';
+import { usePrevious } from '../../../hooks';
+import { RecoverAccountModalRoutes } from '../../../routes/routesEnum';
 import { deviceUtils } from '../../../utils/hardware';
 
+import { showJumpPageDialog } from './JumpPage';
+import RecoverAccountListItemMenu from './RecoverAccountListItemMenu';
+import RecoverAccountMenu from './RecoverAccountMenu';
 import { FROM_INDEX_MAX } from './RecoverAccountsAdvanced';
 
+import type { IDerivationOption } from '../../../components/NetworkAccountSelector/hooks/useDerivationPath';
 import type {
   AdvancedValues,
   RecoverAccountType as RecoverAccountConfirmType,
@@ -53,7 +70,7 @@ type RouteProps = RouteProp<
   CreateAccountModalRoutes.RecoverAccountsList
 >;
 
-type RecoverAccountType = ImportableHDAccount;
+export type RecoverAccountType = ImportableHDAccount;
 type SelectStateType = {
   selected: boolean;
   isDisabled: boolean;
@@ -63,9 +80,10 @@ type CellProps = {
   item: RecoverAccountType;
   state: SelectStateType | undefined;
   decimal: number;
+  symbol: string;
   showPathAndLink: boolean;
+  network: Network;
   onChange: (select: boolean) => void;
-  openBlockExplorer: (address: string) => void;
 } & ComponentProps<typeof Box>;
 
 const AccountCell: FC<CellProps> = ({
@@ -73,8 +91,9 @@ const AccountCell: FC<CellProps> = ({
   state,
   onChange,
   decimal,
+  symbol,
+  network,
   showPathAndLink,
-  openBlockExplorer,
 }) => {
   const [isChecked, setChecked] = useState(state?.selected ?? false);
 
@@ -87,6 +106,13 @@ const AccountCell: FC<CellProps> = ({
     setChecked(!isChecked);
     onChange?.(!isChecked);
   }, [isChecked, state?.isDisabled, onChange]);
+
+  const displayPath = useMemo(() => {
+    if (isBtcLikeImpl(network.impl)) {
+      return `${item.path}/0/0`;
+    }
+    return item.path;
+  }, [network, item]);
 
   return (
     <ListItem onPress={onToggle} flex={1}>
@@ -109,6 +135,7 @@ const AccountCell: FC<CellProps> = ({
             typography="Body2"
             color="text-subdued"
             wordBreak="break-all"
+            maxW={platformEnv.isNativeAndroid ? '45px' : 'auto'}
           >
             {item.index + 1}
           </Text>
@@ -122,7 +149,7 @@ const AccountCell: FC<CellProps> = ({
         text={{
           label: shortenAddress(item.displayAddress),
           labelProps: { w: '120px' },
-          description: showPathAndLink ? item.path : undefined,
+          description: showPathAndLink ? displayPath : undefined,
           descriptionProps: { typography: 'Caption', w: '132px' },
           size: 'sm',
         }}
@@ -134,6 +161,7 @@ const AccountCell: FC<CellProps> = ({
             formatOptions={{
               fixed: decimal ?? 4,
             }}
+            suffix={symbol}
             render={(ele) => (
               <Typography.Body2
                 style={{
@@ -149,20 +177,19 @@ const AccountCell: FC<CellProps> = ({
           />
         </Box>
       </ListItem.Column>
-      {showPathAndLink && (
-        <ListItem.Column>
+      <ListItem.Column>
+        <RecoverAccountListItemMenu item={item} network={network}>
           <IconButton
+            alignItems="flex-end"
             type="plain"
-            name="ArrowTopRightOnSquareMini"
+            name="EllipsisVerticalMini"
+            color="icon-subdued"
             size="xs"
             hitSlop={12}
             circle
-            onPress={() => {
-              openBlockExplorer(item.displayAddress);
-            }}
           />
-        </ListItem.Column>
-      )}
+        </RecoverAccountListItemMenu>
+      </ListItem.Column>
     </ListItem>
   );
 };
@@ -170,14 +197,14 @@ const AccountCell: FC<CellProps> = ({
 type ListTableHeaderProps = {
   symbol: string;
   isAllSelected: boolean;
+  isAllSelectedDisabled: boolean;
   showPathAndLink: boolean;
   onChange: (v: boolean) => void;
 } & ComponentProps<typeof Box>;
 
 const ListTableHeader: FC<ListTableHeaderProps> = ({
-  symbol,
   isAllSelected,
-  showPathAndLink,
+  isAllSelectedDisabled,
   onChange,
 }) => {
   const intl = useIntl();
@@ -191,7 +218,12 @@ const ListTableHeader: FC<ListTableHeaderProps> = ({
           justifyContent="flex-start"
           w="65px"
         >
-          <CheckBox w={6} isChecked={isAllSelected} onChange={onChange} />
+          <CheckBox
+            w={6}
+            isChecked={isAllSelectedDisabled || isAllSelected}
+            onChange={onChange}
+            isDisabled={isAllSelectedDisabled}
+          />
         </Box>
       </ListItem.Column>
       <ListItem.Column
@@ -204,7 +236,7 @@ const ListTableHeader: FC<ListTableHeaderProps> = ({
       <ListItem.Column
         alignItems="flex-end"
         text={{
-          label: symbol,
+          label: intl.formatMessage({ id: 'form__balance' }),
           labelProps: {
             typography: 'Subheading',
             textAlign: 'right',
@@ -213,11 +245,9 @@ const ListTableHeader: FC<ListTableHeaderProps> = ({
         }}
         flex={1}
       />
-      {showPathAndLink && (
-        <ListItem.Column>
-          <Box w="28px" />
-        </ListItem.Column>
-      )}
+      <ListItem.Column>
+        <Box w="auto" />
+      </ListItem.Column>
     </ListItem>
   );
 };
@@ -225,9 +255,11 @@ const ListTableHeader: FC<ListTableHeaderProps> = ({
 type ListTableFooterProps = {
   minLimit?: number;
   count?: number;
+  currentPage?: number;
   prevButtonDisabled?: boolean;
   nextButtonDisabled?: boolean;
-  onAdvancedPress: () => void;
+  onPagePress: () => void;
+  onBulkAddPress: () => void;
   onNextPagePress: () => void;
   onPrevPagePress: () => void;
 };
@@ -235,14 +267,21 @@ type ListTableFooterProps = {
 const ListTableFooter: FC<ListTableFooterProps> = ({
   minLimit,
   count,
+  currentPage,
   prevButtonDisabled,
   nextButtonDisabled,
-  onAdvancedPress,
+  onPagePress,
+  onBulkAddPress,
   onNextPagePress,
   onPrevPagePress,
 }) => {
   const intl = useIntl();
   const maxLimit = (minLimit ?? 0) + (count ?? 0) - 1;
+
+  const page = useMemo(() => {
+    if (!currentPage) return 1;
+    return currentPage + 1;
+  }, [currentPage]);
 
   return (
     <HStack flexDirection="row" justifyContent="space-between" pt={4}>
@@ -251,22 +290,41 @@ const ListTableFooter: FC<ListTableFooterProps> = ({
         type="basic"
         leftIconName="AdjustmentsMini"
         alignItems="flex-start"
-        onPress={onAdvancedPress}
+        onPress={onBulkAddPress}
         overflow="hidden"
       >
         {minLimit && count
           ? `${minLimit} - ${maxLimit}`
-          : intl.formatMessage({ id: 'content__advanced' })}
+          : intl.formatMessage({ id: 'action__bulk_add' })}
       </Button>
-      <HStack space={2} alignItems="flex-end">
+      <HStack space={0} alignItems="flex-end">
         <Button
+          w="40px"
           type="basic"
+          borderRightRadius={0}
           leftIconName="ChevronLeftMini"
           onPress={onPrevPagePress}
           isDisabled={prevButtonDisabled}
         />
         <Button
+          w={platformEnv.isNative ? 'auto' : '39px'}
+          h={platformEnv.isNative ? '37px' : '38px'}
           type="basic"
+          onPress={onPagePress}
+          isDisabled={false}
+          borderLeftWidth={0}
+          borderRightWidth={0}
+          borderLeftRadius={0}
+          borderRightRadius={0}
+        >
+          <Text maxW="30px" maxH="38px" isTruncated>
+            {page}
+          </Text>
+        </Button>
+        <Button
+          w="40px"
+          type="basic"
+          borderLeftRadius={0}
           leftIconName="ChevronRightMini"
           onPress={onNextPagePress}
           isDisabled={nextButtonDisabled}
@@ -276,11 +334,69 @@ const ListTableFooter: FC<ListTableFooterProps> = ({
   );
 };
 
+const DerivationPathForm: FC<{
+  walletId: string;
+  networkId: string | undefined;
+  derivationOptions: IDerivationOption[];
+  selectedOption?: IDerivationOption;
+  onChange: (option: IDerivationOption) => void;
+}> = ({ walletId, networkId, derivationOptions, selectedOption, onChange }) => {
+  const intl = useIntl();
+  const { control, setValue } = useForm<{ derivationType: string }>({
+    defaultValues: { derivationType: 'default' },
+  });
+
+  const value = useMemo(() => {
+    let label: IDerivationOption['label'];
+    if (selectedOption) {
+      label = selectedOption.label;
+    } else {
+      label =
+        (derivationOptions ?? []).find((item) => item.key === 'default')
+          ?.label || '';
+    }
+    if (!label) return '';
+    if (typeof label === 'string') return label;
+    if (typeof label === 'object') return intl.formatMessage({ id: label.id });
+  }, [selectedOption, derivationOptions, intl]);
+
+  useEffect(() => {
+    setValue('derivationType', value ?? '');
+  }, [value, setValue]);
+
+  const onPress = useCallback(() => {
+    showDerivationPathBottomSheetModal({
+      type: 'search',
+      walletId,
+      networkId,
+      onSelect: (option) => onChange?.(option),
+    });
+  }, [walletId, networkId, onChange]);
+
+  if (!derivationOptions || derivationOptions.length < 2) return null;
+
+  return (
+    <Form w="full" mb="26px">
+      <Pressable onPress={onPress}>
+        <Form.Item name="derivationType" control={control}>
+          <Form.Input
+            size="lg"
+            rightIconName="ChevronDownMini"
+            isReadOnly
+            onPressRightIcon={onPress}
+            onPressIn={platformEnv.isNativeIOS ? onPress : undefined}
+          />
+        </Form.Item>
+      </Pressable>
+    </Form>
+  );
+};
+
 const PAGE_SIZE = 10;
 const RecoverAccounts: FC = () => {
   const intl = useIntl();
   const route = useRoute<RouteProps>();
-  const { password, walletId, network, purpose } = route.params;
+  const { password, walletId, network } = route.params;
 
   const navigation = useNavigation<NavigationProps['navigation']>();
 
@@ -300,9 +416,16 @@ const RecoverAccounts: FC = () => {
   const selectedNetWork = networks.filter((n) => n.id === network)[0];
   const decimal = selectedNetWork?.nativeDisplayDecimals;
   const symbol = selectedNetWork?.symbol;
-  const { openAddressDetails } = useOpenBlockBrowser(selectedNetWork);
 
   const [isAllSelected, setAllSelected] = useState(false);
+  const isAllSelectedDisabled = useMemo(
+    () =>
+      currentPageData.every((item) => {
+        const state = selectState.get(item.index);
+        return state?.isDisabled;
+      }),
+    [currentPageData, selectState],
+  );
   const [config, setConfig] = useState<
     AdvancedValues & { currentPage: number }
   >({
@@ -350,16 +473,55 @@ const RecoverAccounts: FC = () => {
     refreshActiveAccounts();
   }, [network, wallet, obj]);
 
+  const isSwitchingDerivationPath = useRef(false);
+  const { derivationOptions } = useDerivationPath(wallet?.id, network);
+  const [selectedDerivationOption, setSelectedDerivationOption] =
+    useState<IDerivationOption>();
+  const template = useMemo(() => {
+    if (selectedDerivationOption) {
+      return selectedDerivationOption.template;
+    }
+    return (
+      derivationOptions.find((item) => item.key === 'default')?.template ?? ''
+    );
+  }, [selectedDerivationOption, derivationOptions]);
+  const previousTemplate = usePrevious(template);
+  const purpose = useMemo(() => {
+    if (selectedDerivationOption) {
+      return parseInt(selectedDerivationOption.category.split("'/")[0]);
+    }
+    const defaultOption = derivationOptions.find(
+      (item) => item.key === 'default',
+    );
+    if (defaultOption) {
+      return parseInt(defaultOption.category.split("'/")[0]);
+    }
+    return 44;
+  }, [selectedDerivationOption, derivationOptions]);
+
+  // set default derivation option
+  useEffect(() => {
+    const defaultOption = derivationOptions.find(
+      (item) => item.key === 'default',
+    );
+    if (defaultOption) {
+      setSelectedDerivationOption(defaultOption);
+    }
+  }, [derivationOptions]);
+
   useEffect(() => {
     currentPageRef.current = config.currentPage;
   }, [config.currentPage]);
 
   useEffect(() => {
     if (!depDataInit) return;
-    if (isLoading) return;
+    if (isLoading && !isSwitchingDerivationPath.current) return;
+    if (!template) return;
 
     isFetchingData.current = true;
-    setLoading(true);
+    if (!isSwitchingDerivationPath.current) {
+      setLoading(true);
+    }
     setPendRefreshData(false);
 
     const pageIndex = config.currentPage;
@@ -403,16 +565,25 @@ const RecoverAccounts: FC = () => {
           return true;
         }
         return false;
-      })
+      }) &&
+      template === previousTemplate
     ) {
       updateCurrentPageData(currentPageArray);
       isFetchingData.current = false;
+      isSwitchingDerivationPath.current = false;
       setLoading(false);
       return;
     }
-
     backgroundApiProxy.engine
-      .searchHDAccounts(walletId, network, password, start, limit, purpose)
+      .searchHDAccounts(
+        walletId,
+        network,
+        password,
+        start,
+        limit,
+        purpose,
+        template,
+      )
       .then((accounts) => {
         if (accounts.length !== limit || accounts.length !== pageSize) {
           limit = accounts.length;
@@ -422,17 +593,22 @@ const RecoverAccounts: FC = () => {
         const addedAccounts = new Map(loadedAccounts);
         const addedSelectState = new Map<number, SelectStateType>(selectState);
         accounts.forEach((i) => {
-          const isDisabled = activeAccounts.current.some(
-            (a) => a.path === i.path,
-          );
+          const isDisabled = activeAccounts.current.some((a) => {
+            if (a.template) {
+              // fix ledger live first account path is same as bip44
+              return a.template === template && a.path === i.path;
+            }
+            return a.path === i.path;
+          });
           addedSelectState.set(i.index, {
             isDisabled,
             selected: isDisabled || !!isBatchMode,
           });
-          addedAccounts.set(i.index, i);
+          addedAccounts.set(i.index, { ...i, template });
         });
 
         isFetchingData.current = false;
+        isSwitchingDerivationPath.current = false;
         updateCurrentPageData(accounts);
         setLoadedAccounts(addedAccounts);
         setSelectState(addedSelectState);
@@ -449,7 +625,7 @@ const RecoverAccounts: FC = () => {
 
         const addedAccounts = new Map(accounts.loadedAccounts);
         accountsWithBalance.forEach((i) => {
-          addedAccounts.set(i.index, i);
+          addedAccounts.set(i.index, { ...i, template });
         });
 
         updateCurrentPageData(accountsWithBalance);
@@ -457,6 +633,7 @@ const RecoverAccounts: FC = () => {
       })
       .catch((e) => {
         isFetchingData.current = false;
+        isSwitchingDerivationPath.current = false;
         setLoading(false);
         if (navigation.isFocused()) {
           setTimeout(() => {
@@ -478,8 +655,8 @@ const RecoverAccounts: FC = () => {
     navigation,
     network,
     password,
-    purpose,
     walletId,
+    template,
   ]);
 
   const checkBoxOnChange = useCallback(
@@ -540,7 +717,9 @@ const RecoverAccounts: FC = () => {
   const rowRenderer = useCallback(
     ({ item }: ListRenderItemInfo<RecoverAccountType>) => (
       <AccountCell
+        network={selectedNetWork}
         decimal={decimal}
+        symbol={symbol}
         showPathAndLink={config.showPathAndLink}
         flex={1}
         item={item}
@@ -548,7 +727,6 @@ const RecoverAccounts: FC = () => {
         onChange={(selected) => {
           checkBoxOnChange(selected, item);
         }}
-        openBlockExplorer={openAddressDetails}
       />
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -599,6 +777,20 @@ const RecoverAccounts: FC = () => {
     currentPageData.length,
   ]);
 
+  const maxPage = useMemo(() => {
+    if (currentPageData.length < PAGE_SIZE) return config.currentPage + 1;
+    if (config.fromIndex >= FROM_INDEX_MAX) return 1;
+    if (config.generateCount) {
+      return Math.ceil(config.generateCount / PAGE_SIZE);
+    }
+    return Math.ceil(FROM_INDEX_MAX / PAGE_SIZE);
+  }, [
+    config.fromIndex,
+    config.generateCount,
+    config.currentPage,
+    currentPageData.length,
+  ]);
+
   const isLoadingState = useMemo(
     () => pendRefreshData || isLoading || !depDataInit,
     [depDataInit, isLoading, pendRefreshData],
@@ -615,12 +807,53 @@ const RecoverAccounts: FC = () => {
     [config.showPathAndLink],
   );
 
+  const headerDescription = useMemo(
+    () => (
+      <Token
+        size={4}
+        showInfo
+        showName
+        showTokenVerifiedIcon={false}
+        token={{
+          name: selectedNetWork?.name,
+          logoURI: selectedNetWork?.logoURI,
+        }}
+        nameProps={{
+          typography: { sm: 'Caption', md: 'Caption' },
+          color: 'text-subdued',
+          ml: '-6px',
+        }}
+      />
+    ),
+    [selectedNetWork],
+  );
+
   return (
     <Modal
       height="640px"
-      header={intl.formatMessage({ id: 'action__recover_accounts' })}
-      headerDescription={`${selectedNetWork?.name}`}
-      primaryActionTranslationId="action__recover"
+      header={intl.formatMessage({ id: 'action__manage_account' })}
+      headerDescription={headerDescription}
+      rightContent={
+        <RecoverAccountMenu
+          showPath={config.showPathAndLink}
+          password={password}
+          walletId={walletId}
+          networkId={selectedNetWork.id}
+          template={template}
+          onChange={(isChecked) => {
+            const newConfig = { ...config, showPathAndLink: isChecked };
+            setConfig(newConfig);
+          }}
+        >
+          <IconButton
+            type="plain"
+            size="lg"
+            circle
+            name="EllipsisVerticalOutline"
+          />
+        </RecoverAccountMenu>
+      }
+      primaryActionTranslationId="action__done"
       onPrimaryActionPress={() => {
         hardwareCancel();
 
@@ -635,10 +868,11 @@ const RecoverAccounts: FC = () => {
         });
 
         navigation.navigate(CreateAccountModalRoutes.RecoverAccountsConfirm, {
-          accounts: recoverAccounts,
+          accounts: recoverAccounts.filter((i) => i.template === template),
           walletId,
           network,
           purpose,
+          template,
           existingAccounts: activeAccounts.current,
           config: {
             ...config,
@@ -669,9 +903,23 @@ const RecoverAccounts: FC = () => {
         </Center>
       ) : (
         <Box flex={1}>
+          <DerivationPathForm
+            walletId={walletId}
+            networkId={network}
+            derivationOptions={derivationOptions}
+            selectedOption={selectedDerivationOption}
+            onChange={(option) => {
+              if (option.template !== selectedDerivationOption?.template) {
+                setLoading(true);
+                isSwitchingDerivationPath.current = true;
+              }
+              setSelectedDerivationOption(option);
+            }}
+          />
           <ListTableHeader
             symbol={symbol}
             isAllSelected={isAllSelected}
+            isAllSelectedDisabled={isAllSelectedDisabled}
             showPathAndLink={config.showPathAndLink}
             onChange={(selectedAll) => {
               setAllSelected(selectedAll);
@@ -709,8 +957,21 @@ const RecoverAccounts: FC = () => {
           <ListTableFooter
             minLimit={config.fromIndex}
             count={config.generateCount}
+            currentPage={config.currentPage}
             prevButtonDisabled={config.currentPage === 0}
             nextButtonDisabled={isMaxPage}
+            onPagePress={() => {
+              showJumpPageDialog({
+                currentPage: config.currentPage,
+                maxPage,
+                onConfirm: (page) => {
+                  setConfig((prev) => ({
+                    ...prev,
+                    currentPage: page - 1,
+                  }));
+                },
+              });
+            }}
             onPrevPagePress={() => {
               setConfig((prev) => {
                 if (prev.currentPage === 0) return prev;
@@ -729,43 +990,38 @@ const RecoverAccounts: FC = () => {
                 };
               });
             }}
-            onAdvancedPress={() => {
-              navigation.navigate(
-                CreateAccountModalRoutes.RecoverAccountsAdvanced,
-                {
-                  fromIndex: config.fromIndex,
-                  generateCount: config.generateCount,
-                  showPathAndLink: config.showPathAndLink,
-                  onApply: ({
-                    fromIndex,
-                    generateCount: count,
-                    showPathAndLink: showPath,
-                  }) => {
-                    const isForceRefresh =
-                      config.fromIndex !== fromIndex ||
-                      config.generateCount !== count;
-
-                    if (isForceRefresh) setPendRefreshData(true);
-
-                    setTimeout(() => {
-                      const newConfig = {
-                        currentPage: isForceRefresh ? 0 : config.currentPage,
-                        fromIndex,
-                        generateCount: count,
-                        showPathAndLink: showPath,
-                      };
-
-                      if (isForceRefresh) {
-                        setSelectState(new Map());
-                        setLoadedAccounts(new Map());
-                      }
-
-                      setRealGenerateCount(Number.MAX_VALUE);
-                      setConfig(newConfig);
-                    }, 100);
+            onBulkAddPress={() => {
+              navigation.navigate(RootRoutes.Modal, {
+                screen: ModalRoutes.RecoverAccount,
+                params: {
+                  screen: RecoverAccountModalRoutes.RecoverAccountsAdvanced,
+                  params: {
+                    networkId: selectedNetWork?.id,
+                    fromIndex: config.fromIndex,
+                    generateCount: config.generateCount,
+                    onApply: ({ fromIndex, generateCount: count }) => {
+                      const isForceRefresh =
+                        config.fromIndex !== fromIndex ||
+                        config.generateCount !== count;
+                      if (isForceRefresh) setPendRefreshData(true);
+                      setTimeout(() => {
+                        const newConfig = {
+                          currentPage: isForceRefresh ? 0 : config.currentPage,
+                          fromIndex,
+                          generateCount: count,
+                          showPathAndLink: config.showPathAndLink,
+                        };
+                        if (isForceRefresh) {
+                          setSelectState(new Map());
+                          setLoadedAccounts(new Map());
+                        }
+                        setRealGenerateCount(Number.MAX_VALUE);
+                        setConfig(newConfig);
+                      }, 100);
+                    },
                   },
                 },
-              );
+              });
             }}
           />
         </Box>

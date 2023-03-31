@@ -15,13 +15,17 @@ import {
   enabledAccountDynamicNetworkIds,
 } from '@onekeyhq/shared/src/engine/engineConsts';
 import { isPassphraseWallet } from '@onekeyhq/shared/src/engine/engineUtils';
+import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import backgroundApiProxy from '../../background/instance/backgroundApiProxy';
 import { useActiveWalletAccount, useNavigation } from '../../hooks';
 import { useCopyAddress } from '../../hooks/useCopyAddress';
 import { buildAddressDetailsUrl } from '../../hooks/useOpenBlockBrowser';
-import { FiatPayRoutes } from '../../routes/Modal/FiatPay';
-import { ModalRoutes, RootRoutes } from '../../routes/routesEnum';
+import {
+  FiatPayModalRoutes,
+  ModalRoutes,
+  RootRoutes,
+} from '../../routes/routesEnum';
 import { setPushNotificationConfig } from '../../store/reducers/settings';
 import { openUrl } from '../../utils/openUrl';
 import {
@@ -38,7 +42,6 @@ const NeedActivateAccountImpl = [IMPL_APTOS, IMPL_SUI];
 
 const AccountMoreMenu: FC<IMenu> = (props) => {
   const intl = useIntl();
-
   const navigation = useNavigation();
   const { network, account, wallet, accountId } = useActiveWalletAccount();
   const { copyAddress } = useCopyAddress({ wallet });
@@ -170,42 +173,44 @@ const AccountMoreMenu: FC<IMenu> = (props) => {
         icon: 'LightBulbMini',
       },
       // TODO Connected Sites
-      walletType !== 'watching' && {
-        id: 'action__buy_crypto',
-        onPress: () => {
-          if (!account) return;
-          navigation.navigate(RootRoutes.Modal, {
-            screen: ModalRoutes.FiatPay,
-            params: {
-              screen: FiatPayRoutes.SupportTokenListModal,
+      walletType !== 'watching' &&
+        !platformEnv.isAppleStoreEnv && {
+          id: 'action__buy_crypto',
+          onPress: () => {
+            if (!account) return;
+            navigation.navigate(RootRoutes.Modal, {
+              screen: ModalRoutes.FiatPay,
               params: {
-                networkId: network?.id ?? '',
-                accountId,
-                type: 'buy',
+                screen: FiatPayModalRoutes.SupportTokenListModal,
+                params: {
+                  networkId: network?.id ?? '',
+                  accountId,
+                  type: 'buy',
+                },
               },
-            },
-          });
+            });
+          },
+          icon: 'PlusMini',
         },
-        icon: 'PlusMini',
-      },
-      walletType !== 'watching' && {
-        id: 'action__sell_crypto',
-        onPress: () => {
-          if (!account) return;
-          navigation.navigate(RootRoutes.Modal, {
-            screen: ModalRoutes.FiatPay,
-            params: {
-              screen: FiatPayRoutes.SupportTokenListModal,
+      walletType !== 'watching' &&
+        !platformEnv.isAppleStoreEnv && {
+          id: 'action__sell_crypto',
+          onPress: () => {
+            if (!account) return;
+            navigation.navigate(RootRoutes.Modal, {
+              screen: ModalRoutes.FiatPay,
               params: {
-                networkId: network?.id ?? '',
-                type: 'sell',
-                accountId,
+                screen: FiatPayModalRoutes.SupportTokenListModal,
+                params: {
+                  networkId: network?.id ?? '',
+                  type: 'sell',
+                  accountId,
+                },
               },
-            },
-          });
+            });
+          },
+          icon: 'BanknotesMini',
         },
-        icon: 'BanknotesMini',
-      },
       !!explorerUrl && {
         id: 'action__view_on_somewhere',
         intlValues: {
@@ -222,7 +227,10 @@ const AccountMoreMenu: FC<IMenu> = (props) => {
         id: 'action__copy_address',
         onPress: () => {
           setTimeout(() => {
-            copyAddress(account?.address);
+            copyAddress({
+              address: account?.address,
+              displayAddress: account?.displayAddress,
+            });
           });
         },
         icon: 'Square2StackMini',

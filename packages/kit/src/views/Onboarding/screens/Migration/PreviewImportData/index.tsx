@@ -8,6 +8,7 @@ import {
 
 import { useNavigation, useRoute } from '@react-navigation/core';
 import { useIntl } from 'react-intl';
+import semver from 'semver';
 
 import {
   Box,
@@ -19,32 +20,23 @@ import {
   ToastManager,
   useIsVerticalLayout,
 } from '@onekeyhq/components';
-import type {
-  HomeRoutes,
-  HomeRoutesParams,
-} from '@onekeyhq/kit/src/routes/types';
 import { RestoreResult } from '@onekeyhq/shared/src/services/ServiceCloudBackup/ServiceCloudBackup.enums';
 
 import backgroundApiProxy from '../../../../../background/instance/backgroundApiProxy';
-import { useData } from '../../../../../hooks/redux';
+import { useAppSelector, useData } from '../../../../../hooks/redux';
 import useImportBackupPasswordModal from '../../../../../hooks/useImportBackupPasswordModal';
 import useLocalAuthenticationModal from '../../../../../hooks/useLocalAuthenticationModal';
 import { useOnboardingDone } from '../../../../../hooks/useOnboardingRequired';
 import { GroupedBackupDetails } from '../../../../Me/SecuritySection/CloudBackup/BackupDetails';
+import { showUpgrateDialog } from '../../../../Me/SecuritySection/CloudBackup/UpgrateDialog';
 import { useOnboardingClose } from '../../../hooks';
 import Layout from '../../../Layout';
 
 import type { EOnboardingRoutes } from '../../../routes/enums';
 import type { IOnboardingRoutesParams } from '../../../routes/types';
 import type { RouteProp } from '@react-navigation/core';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 const defaultProps = {} as const;
-
-type NavigationProps = NativeStackNavigationProp<
-  HomeRoutesParams,
-  HomeRoutes.InitialTab
->;
 
 type RouteProps = RouteProp<
   IOnboardingRoutesParams,
@@ -55,8 +47,9 @@ const PreviewImportData = () => {
   const intl = useIntl();
   const route = useRoute<RouteProps>();
   const { data } = route.params;
-  const navigation = useNavigation<NavigationProps>();
+  const navigation = useNavigation();
   const { serviceCloudBackup } = backgroundApiProxy;
+  const version = useAppSelector((s) => s.settings.version);
   const isVerticalLayout = useIsVerticalLayout();
   const { isPasswordSet } = useData();
   const { showVerify } = useLocalAuthenticationModal();
@@ -100,9 +93,26 @@ const PreviewImportData = () => {
     navigation.goBack();
   }, [intl, navigation]);
 
+  const checkVersion = useCallback(() => {
+    // old version
+    if (data.appVersion === undefined) {
+      return true;
+    }
+    // data version >= local version
+    if (data.appVersion && semver.gt(data.appVersion, version)) {
+      return false;
+    }
+    return true;
+  }, [data.appVersion, version]);
+
   const importAction = useCallback(
     async () =>
       new Promise<boolean>((resolve) => {
+        if (checkVersion() === false) {
+          showUpgrateDialog();
+          resolve(false);
+          return;
+        }
         if (isPasswordSet) {
           showVerify(
             (localPassword) => {
@@ -173,6 +183,7 @@ const PreviewImportData = () => {
       }),
     [
       backupData.notOnDevice,
+      checkVersion,
       data.private,
       isPasswordSet,
       onImportDone,

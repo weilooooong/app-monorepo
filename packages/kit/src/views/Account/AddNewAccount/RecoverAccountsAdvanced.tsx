@@ -12,14 +12,16 @@ import {
   KeyboardDismissView,
   Modal,
   RadioButton,
+  Text,
+  Token,
   useForm,
   useIsVerticalLayout,
 } from '@onekeyhq/components';
-import type {
-  CreateAccountModalRoutes,
-  CreateAccountRoutesParams,
-} from '@onekeyhq/kit/src/routes';
+import type { CreateAccountRoutesParams } from '@onekeyhq/kit/src/routes';
 
+import { useNetwork } from '../../../hooks';
+
+import type { CreateAccountModalRoutes } from '../../../routes/routesEnum';
 import type { RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -37,10 +39,29 @@ type NavigationProps = NativeStackNavigationProp<
 type FromValues = {
   fromIndex: string;
   generateCount?: string;
-  showPathAndLink: boolean;
 };
 
-export const FROM_INDEX_MAX = 2 ** 31;
+export const FROM_INDEX_MAX = 2 ** 31 - 1;
+
+const ModalHeader: FC<{ networkId: string | undefined }> = ({ networkId }) => {
+  const { network } = useNetwork({ networkId });
+  return (
+    <Box>
+      <Token
+        size={4}
+        showInfo
+        showName
+        showTokenVerifiedIcon={false}
+        token={{ name: network?.name, logoURI: network?.logoURI }}
+        nameProps={{
+          typography: { sm: 'Caption', md: 'Caption' },
+          color: 'text-subdued',
+          ml: '-6px',
+        }}
+      />
+    </Box>
+  );
+};
 
 const RecoverAccountsAdvanced: FC = () => {
   const isSmallScreen = useIsVerticalLayout();
@@ -48,7 +69,7 @@ const RecoverAccountsAdvanced: FC = () => {
   const intl = useIntl();
   const route = useRoute<RouteProps>();
   const navigation = useNavigation<NavigationProps>();
-  const { fromIndex, generateCount, showPathAndLink, onApply } = route.params;
+  const { fromIndex, generateCount, onApply, networkId } = route.params;
 
   const [configGenerateCount] = useState([10, 50, 100]);
 
@@ -62,8 +83,7 @@ const RecoverAccountsAdvanced: FC = () => {
   } = useForm<FromValues>({
     defaultValues: {
       fromIndex: `${fromIndex}`,
-      generateCount: generateCount ? `${generateCount}` : undefined,
-      showPathAndLink,
+      generateCount: generateCount ? `${generateCount}` : `10`,
     },
     mode: 'onChange',
   });
@@ -130,7 +150,6 @@ const RecoverAccountsAdvanced: FC = () => {
         generateCount: data.generateCount
           ? parseInt(`${data.generateCount}`)
           : undefined,
-        showPathAndLink: data.showPathAndLink,
       });
     },
     [intl, navigation, onApply, setError, validateFromIndexTooLarge],
@@ -164,13 +183,13 @@ const RecoverAccountsAdvanced: FC = () => {
 
   return (
     <Modal
-      header={intl.formatMessage({ id: 'content__advanced' })}
-      headerDescription={intl.formatMessage({ id: 'action__recover_accounts' })}
+      header={intl.formatMessage({ id: 'action__bulk_add' })}
+      headerDescription={<ModalHeader networkId={networkId} />}
       primaryActionProps={{
         onPromise: handleSubmit(onSubmit),
         isDisabled: !isValid,
       }}
-      primaryActionTranslationId="action__apply"
+      primaryActionTranslationId="action__preview"
       hideSecondaryAction
     >
       <KeyboardDismissView>
@@ -243,6 +262,12 @@ const RecoverAccountsAdvanced: FC = () => {
               defaultMessage: 'Generate Amount',
             })}
             rules={{
+              required: {
+                value: true,
+                message: intl.formatMessage({
+                  id: 'form__field_is_required',
+                }),
+              },
               min: {
                 value: 1,
                 message: intl.formatMessage(
@@ -280,16 +305,16 @@ const RecoverAccountsAdvanced: FC = () => {
               rightCustomElement={generateCountButton}
             />
           </Form.Item>
-          <Form.Item name="showPathAndLink" control={control}>
-            <Form.Switch
-              isFullMode
-              labelType="before"
-              label={intl.formatMessage({
-                id: 'form__show_path_and_link',
-                defaultMessage: 'Show Path and Link',
-              })}
-            />
-          </Form.Item>
+          <Text
+            typography={{ sm: 'Body2', md: 'Body2' }}
+            color="text-subdued"
+            mt="-20px"
+          >
+            {intl.formatMessage(
+              { id: 'msg__up_to_str_can_be_generated_at_a_time' },
+              { 0: 100 },
+            )}
+          </Text>
         </Form>
       </KeyboardDismissView>
     </Modal>

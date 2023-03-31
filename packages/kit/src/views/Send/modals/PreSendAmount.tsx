@@ -30,10 +30,15 @@ import backgroundApiProxy from '../../../background/instance/backgroundApiProxy'
 import { AutoSizeText } from '../../../components/AutoSizeText';
 import { FormatBalanceTokenOfAccount } from '../../../components/Format';
 import { useActiveSideAccount } from '../../../hooks';
-import { useSingleToken, useTokenBalance } from '../../../hooks/useTokens';
+import {
+  useSingleToken,
+  useTokenBalance,
+  useTokenBalanceWithoutFrozen,
+} from '../../../hooks/useTokens';
 import { wait } from '../../../utils/helper';
 import { BaseSendModal } from '../components/BaseSendModal';
-import { SendRoutes } from '../types';
+import { PreSendAmountAlert } from '../components/PreSendAmountAlert';
+import { SendModalRoutes } from '../enums';
 import { usePreSendAmountInfo } from '../utils/usePreSendAmountInfo';
 
 import type { SendRoutesParams } from '../types';
@@ -43,9 +48,9 @@ import type { MessageDescriptor } from 'react-intl';
 
 type NavigationProps = NativeStackNavigationProp<
   SendRoutesParams,
-  SendRoutes.PreSendAmount
+  SendModalRoutes.PreSendAmount
 >;
-type RouteProps = RouteProp<SendRoutesParams, SendRoutes.PreSendAmount>;
+type RouteProps = RouteProp<SendRoutesParams, SendModalRoutes.PreSendAmount>;
 
 export function PreSendAmountPreview({
   title,
@@ -130,7 +135,17 @@ function PreSendAmount() {
     tokenIdOnNetwork ?? '',
   );
 
-  const tokenBalance = useTokenBalance({
+  const tokenBalance = useTokenBalanceWithoutFrozen({
+    networkId,
+    accountId,
+    token: {
+      ...tokenInfo,
+      sendAddress: transferInfo.sendAddress,
+    },
+    fallback: '0',
+  });
+
+  const originalTokenBalance = useTokenBalance({
     networkId,
     accountId,
     token: {
@@ -198,7 +213,7 @@ function PreSendAmount() {
         accountId,
         networkId,
         amount,
-        tokenBalance,
+        tokenBalance: originalTokenBalance,
         to: transferInfo.to,
       });
       return { result: true, errorInfo: null };
@@ -215,7 +230,7 @@ function PreSendAmount() {
     amount,
     engine,
     transferInfo,
-    tokenBalance,
+    originalTokenBalance,
     minAmountValidationPassed,
   ]);
   useEffect(() => {
@@ -305,13 +320,13 @@ function PreSendAmount() {
             transferInfo,
           });
 
-          navigation.navigate(SendRoutes.SendConfirm, {
+          navigation.navigate(SendModalRoutes.SendConfirm, {
             accountId,
             networkId,
             encodedTx,
             feeInfoUseFeeInTx: false,
             feeInfoEditable: true,
-            backRouteName: SendRoutes.PreSendAddress,
+            backRouteName: SendModalRoutes.PreSendAddress,
             payload: {
               payloadType: 'Transfer',
               account,
@@ -358,6 +373,11 @@ function PreSendAmount() {
           userSelect: 'none',
         }}
       >
+        <PreSendAmountAlert
+          accountId={accountId}
+          networkId={networkId}
+          tokenId={tokenInfo?.id ?? ''}
+        />
         <Box flexDirection="row" alignItems="baseline">
           <Typography.Body2Strong mr={2} color="text-subdued">
             {intl.formatMessage({ id: 'content__to' })}:

@@ -651,7 +651,7 @@ export default class Vault extends VaultBase {
           status: IDecodedTxStatus.Confirmed,
           networkId: this.networkId,
           accountId: this.accountId,
-          extraInfo: null,
+          extraInfo: historyTxToMerge?.decodedTx.extraInfo,
           totalFeeInNative: new BigNumber(transaction.fee)
             .shiftedBy(-nativeToken.decimals)
             .toFixed(),
@@ -764,7 +764,21 @@ export default class Vault extends VaultBase {
     return (await Promise.all(promises)).filter(Boolean);
   }
 
-  override getPrivateKeyByCredential(credential: string) {
-    return Buffer.from(sdk.seedFromMnemonic(credential));
+  override async getPrivateKeyByCredential(credential: string) {
+    return Promise.resolve(Buffer.from(sdk.seedFromMnemonic(credential)));
+  }
+
+  override validateImportedCredential(input: string): Promise<boolean> {
+    if (this.settings.importedAccountEnabled) {
+      try {
+        const seed = sdk.seedFromMnemonic(input);
+        if (seed) {
+          return Promise.resolve(true);
+        }
+      } catch {
+        // pass
+      }
+    }
+    return Promise.resolve(false);
   }
 }

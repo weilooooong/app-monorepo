@@ -2,7 +2,15 @@
 
 import { defaultAbiCoder } from '@ethersproject/abi';
 import BigNumber from 'bignumber.js';
-import { difference, isNil, isString, merge, reduce, toLower } from 'lodash';
+import {
+  difference,
+  isNil,
+  isString,
+  merge,
+  omit,
+  reduce,
+  toLower,
+} from 'lodash';
 import memoizee from 'memoizee';
 
 import { Geth } from '@onekeyhq/blockchain-libs/src/provider/chains/eth/geth';
@@ -19,12 +27,17 @@ import type {
   SendConfirmPayloadInfo,
 } from '@onekeyhq/kit/src/views/Send/types';
 import { OnekeyNetwork } from '@onekeyhq/shared/src/config/networkIds';
-import { HISTORY_CONSTS } from '@onekeyhq/shared/src/engine/engineConsts';
+import {
+  COINTYPE_ETC,
+  HISTORY_CONSTS,
+  IMPL_EVM,
+} from '@onekeyhq/shared/src/engine/engineConsts';
 import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
 import { toBigIntHex } from '@onekeyhq/shared/src/utils/numberUtils';
 
 import { NotImplemented, OneKeyInternalError } from '../../../errors';
 import * as covalentApi from '../../../managers/covalent';
+import { getAccountNameInfoByImpl } from '../../../managers/impl';
 import {
   buildEncodeDataWithABI,
   createOutputActionFromNFTTransaction,
@@ -48,6 +61,7 @@ import {
   Erc1155MethodSelectors,
   Erc20MethodSelectors,
   Erc721MethodSelectors,
+  WrapperTokenMethodSelectors,
 } from './decoder/abi';
 import {
   EVMDecodedTxType,
@@ -74,7 +88,11 @@ import type {
   CommonMessage,
   ETHMessage,
 } from '../../../types/message';
-import type { EIP1559Fee } from '../../../types/network';
+import type {
+  AccountNameInfo,
+  EIP1559Fee,
+  Network,
+} from '../../../types/network';
 import type { NFTTransaction } from '../../../types/nft';
 import type { KeyringSoftwareBase } from '../../keyring/KeyringSoftwareBase';
 import type {
@@ -758,6 +776,52 @@ export default class Vault extends VaultBase {
     };
   }
 
+  buildEncodedTxFromWrapperTokenDeposit({
+    amount,
+    from,
+    contract,
+  }: {
+    amount: string;
+    from: string;
+    contract: string;
+  }): IEncodedTxEvm {
+    const methodID = WrapperTokenMethodSelectors.doposit;
+    const amountBN = new BigNumber(amount);
+    const amountHex = toBigIntHex(amountBN.shiftedBy(18));
+    const data = `${methodID}${defaultAbiCoder
+      .encode(['uint256'], [amountHex])
+      .slice(2)}`;
+    return {
+      from,
+      to: contract,
+      value: amountHex,
+      data,
+    };
+  }
+
+  buildEncodedTxFromWrapperTokenWithdraw({
+    amount,
+    from,
+    contract,
+  }: {
+    amount: string;
+    from: string;
+    contract: string;
+  }) {
+    const methodID = WrapperTokenMethodSelectors.withdraw;
+    const amountBN = new BigNumber(amount);
+    const amountHex = toBigIntHex(amountBN.shiftedBy(18));
+    const data = `${methodID}${defaultAbiCoder
+      .encode(['uint256'], [amountHex])
+      .slice(2)}`;
+    return {
+      from,
+      to: contract,
+      value: '0x0',
+      data,
+    };
+  }
+
   async buildEncodedTxFromApprove(
     approveInfo: IApproveInfo,
     prevNonce?: number,
@@ -1281,7 +1345,12 @@ export default class Vault extends VaultBase {
       tokens: [],
       address: dbAccount.address,
       displayAddress: ethers.utils.getAddress(dbAccount.address),
+      template: dbAccount.template,
     };
+  }
+
+  override getDisplayAddress(address: string): Promise<string> {
+    return Promise.resolve(ethers.utils.getAddress(address));
   }
 
   async getExportedCredential(password: string): Promise<string> {
@@ -1785,4 +1854,66 @@ export default class Vault extends VaultBase {
       max: 50,
     },
   );
+
+  override async getAccountNameInfoMap(): Promise<
+    Record<string, AccountNameInfo>
+  > {
+    const network = await this.getNetwork();
+    let accountNameInfo = getAccountNameInfoByImpl(network.impl);
+    if (network.id !== OnekeyNetwork.etc) {
+      accountNameInfo = omit(accountNameInfo, 'etcNative');
+    }
+    return accountNameInfo;
+  }
+
+  override async filterAccounts({
+    accounts,
+    networkId,
+  }: {
+    accounts: DBAccount[];
+    networkId: string;
+  }): Promise<DBAccount[]> {
+    if (networkId !== OnekeyNetwork.etc) {
+      return accounts.filter((account) => account.coinType !== COINTYPE_ETC);
+    }
+    return Promise.resolve(accounts);
+  }
+
+  override shouldChangeAccountWhenNetworkChanged({
+    previousNetwork,
+    newNetwork,
+    activeAccountId,
+  }: {
+    previousNetwork: Network | undefined;
+    newNetwork: Network | undefined;
+    activeAccountId: string | null;
+  }): Promise<{
+    shouldReloadAccountList: boolean;
+    shouldChangeActiveAccount: boolean;
+  }> {
+    const prevNetworkIsEtc = previousNetwork?.id === OnekeyNetwork.etc;
+    const newNetworkIsEtc = newNetwork?.id === OnekeyNetwork.etc;
+    const newNetworkIsEvm = newNetwork?.impl === IMPL_EVM && !newNetworkIsEtc;
+    const prevNetworkIsOtherEvm =
+      previousNetwork?.impl === IMPL_EVM && !prevNetworkIsEtc;
+    const isETCAccount = activeAccountId?.indexOf(`m/44'/61'/0'/`);
+    // The previous network is ETC, the new network is another evm chain
+    // but the current account is with etc, so it needs to be refreshed
+    const shouldChangeActiveAccount =
+      prevNetworkIsEtc && newNetworkIsEvm && !!isETCAccount;
+
+    return Promise.resolve({
+      shouldChangeActiveAccount,
+      shouldReloadAccountList: shouldChangeActiveAccount
+        ? // If need to refresh activeAccount, then don't need to refresh the account list additionally
+          false
+        : // The previous network is the evm chain, the next network is etc
+          // the CoinType61 account needs to be refreshed
+          newNetworkIsEtc && prevNetworkIsOtherEvm,
+    });
+  }
+
+  override async canAutoCreateNextAccount(password: string): Promise<boolean> {
+    return Promise.resolve(true);
+  }
 }

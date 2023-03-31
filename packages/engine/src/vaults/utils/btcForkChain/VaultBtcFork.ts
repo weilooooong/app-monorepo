@@ -19,7 +19,10 @@ import type {
   PartialTokenInfo,
   TxInput,
 } from '@onekeyhq/engine/src/vaults/utils/btcForkChain/types';
-import { COINTYPE_BTC } from '@onekeyhq/shared/src/engine/engineConsts';
+import {
+  COINTYPE_BTC,
+  IMPL_BTC,
+} from '@onekeyhq/shared/src/engine/engineConsts';
 import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
 
 import {
@@ -27,7 +30,14 @@ import {
   InvalidAddress,
   NotImplemented,
   OneKeyInternalError,
+  PreviousAccountIsEmpty,
 } from '../../../errors';
+import {
+  getDefaultPurpose,
+  getLastAccountId,
+  getNextAccountId,
+} from '../../../managers/derivation';
+import { getAccountNameInfoByTemplate } from '../../../managers/impl';
 import { EVMDecodedTxType } from '../../impl/evm/decoder/types';
 import {
   IDecodedTxActionType,
@@ -41,12 +51,17 @@ import { BlockBook, getRpcUrlFromChainInfo } from './provider/blockbook';
 import { getAccountDefaultByPurpose, getBIP44Path } from './utils';
 
 import type { ExportedPrivateKeyCredential } from '../../../dbs/base';
-import type { DBUTXOAccount } from '../../../types/account';
+import type {
+  Account,
+  BtcForkChainUsedAccount,
+  DBUTXOAccount,
+} from '../../../types/account';
 import type { KeyringBaseMock } from '../../keyring/KeyringBase';
 import type { KeyringHdBase } from '../../keyring/KeyringHdBase';
 import type {
   IApproveInfo,
   IDecodedTx,
+  IDecodedTxAction,
   IDecodedTxActionNativeTransfer,
   IDecodedTxLegacy,
   IEncodedTx,
@@ -71,7 +86,7 @@ export default class VaultBtcFork extends VaultBase {
   private provider?: Provider;
 
   getDefaultPurpose() {
-    return 49;
+    return getDefaultPurpose(IMPL_BTC);
   }
 
   getCoinName() {
@@ -98,6 +113,10 @@ export default class VaultBtcFork extends VaultBase {
     return 600;
   }
 
+  getAccountXpub(account: DBUTXOAccount) {
+    return account.xpub;
+  }
+
   async getProvider() {
     const rpcURL = await this.getRpcUrl();
     let currentProviderRpcUrl = '';
@@ -115,8 +134,27 @@ export default class VaultBtcFork extends VaultBase {
     return this.provider;
   }
 
+  override async getOutputAccount(): Promise<Account> {
+    // The simplest case as default implementation.
+    const dbAccount = await this.getDbAccount({ noCache: true });
+    return {
+      id: dbAccount.id,
+      name: dbAccount.name,
+      type: dbAccount.type,
+      path: dbAccount.path,
+      coinType: dbAccount.coinType,
+      tokens: [],
+      address: dbAccount.address,
+      xpub: this.getAccountXpub(dbAccount as DBUTXOAccount),
+      template: dbAccount.template,
+      customAddresses: JSON.stringify(
+        (dbAccount as DBUTXOAccount).customAddresses,
+      ),
+    };
+  }
+
   override getFetchBalanceAddress(account: DBUTXOAccount): Promise<string> {
-    return Promise.resolve(account.xpub);
+    return Promise.resolve(this.getAccountXpub(account));
   }
 
   override async validateAddress(address: string): Promise<string> {
@@ -156,19 +194,59 @@ export default class VaultBtcFork extends VaultBase {
     return Promise.resolve(ret);
   }
 
+  override async validateCanCreateNextAccount(
+    walletId: string,
+    template: string,
+  ): Promise<boolean> {
+    const [wallet, network] = await Promise.all([
+      this.engine.getWallet(walletId),
+      this.engine.getNetwork(this.networkId),
+    ]);
+    const lastAccountId = getLastAccountId(wallet, network.impl, template);
+    if (!lastAccountId) return true;
+
+    const [lastAccount] = (await this.engine.dbApi.getAccounts([
+      lastAccountId,
+    ])) as DBUTXOAccount[];
+    if (typeof lastAccount !== 'undefined') {
+      const accountExisted = await this.checkAccountExistence(
+        this.getAccountXpub(lastAccount),
+      );
+      if (!accountExisted) {
+        const { label } = getAccountNameInfoByTemplate(network.impl, template);
+        throw new PreviousAccountIsEmpty(label as string);
+      }
+    }
+
+    return true;
+  }
+
   override async checkAccountExistence(
     accountIdOnNetwork: string,
+    useAddress?: boolean,
   ): Promise<boolean> {
     let accountIsPresent = false;
+    let txCount = 0;
     try {
       const provider = await this.getProvider();
-      const { txs } = (await provider.getAccount({
-        type: 'simple',
-        xpub: accountIdOnNetwork,
-      })) as {
-        txs: number;
-      };
-      accountIsPresent = txs > 0;
+      if (useAddress) {
+        const { txs } = (await provider.getAccountWithAddress({
+          type: 'simple',
+          address: accountIdOnNetwork,
+        })) as {
+          txs: number;
+        };
+        txCount = txs;
+      } else {
+        const { txs } = (await provider.getAccount({
+          type: 'simple',
+          xpub: accountIdOnNetwork,
+        })) as {
+          txs: number;
+        };
+        txCount = txs;
+      }
+      accountIsPresent = txCount > 0;
     } catch (e) {
       console.error(e);
     }
@@ -181,7 +259,8 @@ export default class VaultBtcFork extends VaultBase {
     if (!withMain) {
       return ret;
     }
-    const { xpub } = (await this.getDbAccount()) as DBUTXOAccount;
+    const account = (await this.getDbAccount()) as DBUTXOAccount;
+    const xpub = this.getAccountXpub(account);
     if (!xpub) {
       return [new BigNumber('0'), ...ret];
     }
@@ -193,6 +272,12 @@ export default class VaultBtcFork extends VaultBase {
     requests: { address: string; tokenAddress?: string | undefined }[],
   ): Promise<(BigNumber | undefined)[]> {
     return (await this.getProvider()).getBalances(requests);
+  }
+
+  async getBalancesByAddress(
+    requests: { address: string; tokenAddress?: string | undefined }[],
+  ): Promise<(BigNumber | undefined)[]> {
+    return (await this.getProvider()).getBalancesByAddress(requests);
   }
 
   async getExportedCredential(password: string): Promise<string> {
@@ -549,7 +634,7 @@ export default class VaultBtcFork extends VaultBase {
           (await provider.getHistory(
             {
               type: 'history',
-              xpub: dbAccount.xpub,
+              xpub: this.getAccountXpub(dbAccount),
             },
             impl,
             dbAccount.address,
@@ -627,12 +712,33 @@ export default class VaultBtcFork extends VaultBase {
     return (await Promise.all(promises)).filter(Boolean);
   }
 
+  override async fixActionDirection({
+    action,
+    accountAddress,
+  }: {
+    action: IDecodedTxAction;
+    accountAddress: string;
+  }): Promise<IDecodedTxAction> {
+    // Calculate only if the action has no direction
+    if (
+      action.type === IDecodedTxActionType.NATIVE_TRANSFER &&
+      !action.direction
+    ) {
+      action.direction = await this.buildTxActionDirection({
+        from: action.nativeTransfer?.from || '',
+        to: action.nativeTransfer?.to || '',
+        address: accountAddress,
+      });
+    }
+    return action;
+  }
+
   collectUTXOs = memoizee(
     async () => {
       const provider = await this.getProvider();
       const dbAccount = (await this.getDbAccount()) as DBUTXOAccount;
       try {
-        return await provider.getUTXOs(dbAccount.xpub);
+        return await provider.getUTXOs(this.getAccountXpub(dbAccount));
       } catch (e) {
         console.error(e);
         throw new OneKeyInternalError('Failed to get UTXOs of the account.');
@@ -688,7 +794,34 @@ export default class VaultBtcFork extends VaultBase {
     throw new NotImplemented();
   }
 
-  override getPrivateKeyByCredential(credential: string) {
-    return bs58check.decode(credential);
+  override async getPrivateKeyByCredential(credential: string) {
+    return Promise.resolve(bs58check.decode(credential));
+  }
+
+  override async getAllUsedAddress(): Promise<BtcForkChainUsedAccount[]> {
+    const account = (await this.getDbAccount()) as DBUTXOAccount;
+    const xpub = this.getAccountXpub(account);
+    if (!xpub) {
+      return [];
+    }
+    const provider = await this.getProvider();
+    const { tokens = [] } = (await provider.getAccount({
+      type: 'usedAddress',
+      xpub,
+    })) as unknown as { tokens: BtcForkChainUsedAccount[] };
+
+    return tokens
+      .filter((usedAccount) => {
+        const pathComponents = usedAccount.path.split('/');
+        const isChange =
+          Number.isSafeInteger(+pathComponents[4]) && +pathComponents[4] === 1;
+        return usedAccount.transfers > 0 && !isChange;
+      })
+      .map((usedAccount) => ({
+        ...usedAccount,
+        displayTotalReceived: new BigNumber(usedAccount.totalReceived)
+          .shiftedBy(-8)
+          .toFixed(),
+      }));
   }
 }

@@ -1,13 +1,13 @@
 import type { FC } from 'react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
-import * as Linking from 'expo-linking';
-import { BackHandler } from 'react-native';
+import { openURL as LinkingOpenUrl } from 'expo-linking';
 
 import WebView from '@onekeyhq/kit/src/components/WebView';
 
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
 import { WALLET_CONNECT_PROTOCOL_PREFIXES } from '../../../../components/WalletConnect/walletConnectConsts';
+import useBackHandler from '../../../../hooks/useBackHandler';
 import { handleDeepLinkUrl } from '../../../../routes/deepLink';
 import { homeTab, setWebTabData } from '../../../../store/reducers/webTabs';
 import { gotoSite } from '../Controller/gotoSite';
@@ -70,7 +70,7 @@ const WebContent: FC<WebTab & WebViewProps> = ({
         // canOpenURL may need additional config on android 11+
         // https://github.com/facebook/react-native/issues/32311#issuecomment-933568611
         // so just try open directly
-        Linking.openURL(navUrl).catch();
+        LinkingOpenUrl(navUrl).catch();
         return false;
       }
       return true;
@@ -78,28 +78,23 @@ const WebContent: FC<WebTab & WebViewProps> = ({
     [],
   );
 
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener(
-      'hardwareBackPress',
-      () => {
-        if (
-          isCurrent &&
-          expandAnim.value === MAX_OR_SHOW &&
-          webviewRefs[id] &&
-          canGoBack &&
-          id !== homeTab.id
-        ) {
-          // @ts-ignore
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          webviewRefs[id]?.innerRef?.goBack();
-          return true;
-        }
-        return false;
-      },
-    );
-
-    return () => subscription.remove();
-  }, [canGoBack, id, isCurrent]);
+  useBackHandler(
+    useCallback(() => {
+      if (
+        isCurrent &&
+        expandAnim.value === MAX_OR_SHOW &&
+        webviewRefs[id] &&
+        canGoBack &&
+        id !== homeTab.id
+      ) {
+        // @ts-ignore
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+        webviewRefs[id]?.innerRef?.goBack();
+        return true;
+      }
+      return false;
+    }, [canGoBack, id, isCurrent]),
+  );
 
   const webview = useMemo(
     () => (

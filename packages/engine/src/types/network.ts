@@ -1,5 +1,6 @@
 import type { IVaultSettings } from '../vaults/types';
 import type { HasName } from './base';
+import type { MessageDescriptor } from 'react-intl';
 
 type NetworkBase = HasName & {
   impl: string;
@@ -22,6 +23,7 @@ type PresetNetwork = NetworkBase & {
   prices?: Array<Record<string, any>>;
   explorers?: Array<Record<string, any>>;
   extensions?: Record<string, any>;
+  scanURL?: string;
 };
 
 type DBNetwork = NetworkBase & {
@@ -29,6 +31,7 @@ type DBNetwork = NetworkBase & {
   position: number;
   curve?: string;
   explorerURL?: string;
+  scanURL?: string;
 };
 
 type EvmExtraInfo = {
@@ -39,8 +42,14 @@ type EvmExtraInfo = {
 type AccountNameInfo = {
   prefix: string;
   category: string;
-  label?: string;
+  template: string;
+  coinType: string;
+  label?: { id: MessageDescriptor['id'] } | string;
   addressPrefix?: string;
+  desc?: { id: MessageDescriptor['id']; placeholder?: any } | string;
+  subDesc?: string;
+  recommended?: boolean;
+  notRecommended?: boolean;
 };
 
 type BlockExplorer = {
@@ -67,6 +76,7 @@ type Network = NetworkBase & {
   // TODO: rpcURLs
   blockExplorerURL: BlockExplorer;
   settings: IVaultSettings;
+  scanURL?: string;
 };
 
 type AddEVMNetworkParams = {
@@ -75,6 +85,13 @@ type AddEVMNetworkParams = {
   rpcURL: string;
   explorerURL?: string;
   logoURI?: string;
+};
+
+type SwitchRpcParams = {
+  name: string;
+  rpcURL: string;
+  logoURI?: string;
+  networkId: string;
 };
 
 type AddNetworkParams = AddEVMNetworkParams;
@@ -113,4 +130,5 @@ export type {
   AddNetworkParams,
   UpdateNetworkParams,
   EIP1559Fee,
+  SwitchRpcParams,
 };

@@ -2,14 +2,11 @@ import { useCallback } from 'react';
 
 import { isEmpty } from 'lodash';
 
-import type { MigrateData } from '@onekeyhq/engine/src/types/migrate';
 import type { PublicBackupData } from '@onekeyhq/shared/src/services/ServiceCloudBackup/ServiceCloudBackup.types';
 
 import backgroundApiProxy from '../../../../../background/instance/backgroundApiProxy';
 import { ValidationFields } from '../../../../../components/Protected';
 import useLocalAuthenticationModal from '../../../../../hooks/useLocalAuthenticationModal';
-
-import { showMigrateDataModal } from './MigrateDataModal';
 
 function isEmptyData(data: PublicBackupData) {
   let empty = true;
@@ -41,12 +38,12 @@ export function useExportData() {
 
   const exportDataRequest: () => Promise<{
     status: ExportResult;
-    data?: MigrateData;
+    data?: { privateData: string; publicData: string };
   }> = useCallback(
     async () =>
       new Promise((resolve) => {
         serviceCloudBackup.getDataForBackup('').then((data) => {
-          if (isEmptyData(JSON.parse(data.public))) {
+          if (isEmptyData(JSON.parse(data.publicData))) {
             resolve({ status: ExportResult.EMPTY });
           } else {
             showVerify(
@@ -68,26 +65,4 @@ export function useExportData() {
   );
 
   return { exportDataRequest };
-}
-
-export function useConnectServer() {
-  const { serviceMigrate } = backgroundApiProxy;
-
-  const connectServer = useCallback(
-    async (serverAddress: string) => {
-      const serverInfo = await serviceMigrate.connectServer(serverAddress);
-
-      if (serverInfo) {
-        showMigrateDataModal({
-          serverInfo,
-          serverAddress,
-        });
-        return true;
-      }
-      return false;
-    },
-    [serviceMigrate],
-  );
-
-  return { connectServer };
 }

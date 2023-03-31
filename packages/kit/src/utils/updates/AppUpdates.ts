@@ -1,5 +1,5 @@
 import differenceInDays from 'date-fns/differenceInDays';
-import * as Linking from 'expo-linking';
+import { openURL as LinkingOpenURL, canOpenURL } from 'expo-linking';
 import semver from 'semver';
 
 import { ToastManager } from '@onekeyhq/components';
@@ -10,11 +10,16 @@ import {
   available,
   checking,
   downloading,
+  enable as enableUpdater,
   error,
   notAvailable,
   ready,
+  setLastCheckTimestamp,
 } from '@onekeyhq/kit/src/store/reducers/autoUpdater';
-import { setUpdateSetting } from '@onekeyhq/kit/src/store/reducers/settings';
+import {
+  setForceUpdateVersionInfo,
+  setUpdateSetting,
+} from '@onekeyhq/kit/src/store/reducers/settings';
 import { getTimeStamp } from '@onekeyhq/kit/src/utils/helper';
 import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
 import platformEnv from '@onekeyhq/shared/src/platformEnv';
@@ -23,21 +28,68 @@ import { getDefaultLocale } from '../locale';
 
 import { getChangeLog, getPreReleaseInfo, getReleaseInfo } from './server';
 
-import type { PackageInfo, PackagesInfo, VersionInfo } from './type.d';
+import type { PackageInfo, PackagesInfo, VersionInfo } from './type';
 
 class AppUpdates {
   addedListener = false;
 
   checkUpdate(isManual = false) {
-    if (platformEnv.isDesktop && !platformEnv.isMas) {
+    if (platformEnv.isDesktop && platformEnv.supportAutoUpdate) {
       this.checkDesktopUpdate(isManual);
-      return;
     }
 
-    return this.checkAppUpdate();
+    const { dispatch } = backgroundApiProxy;
+
+    return this.checkAppUpdate().then((newVersion) => {
+      const actions: any[] = [setLastCheckTimestamp(getTimeStamp())];
+
+      if (newVersion) {
+        actions.push(enableUpdater());
+        actions.push(available(newVersion));
+      }
+
+      if (newVersion?.forceUpdate) {
+        actions.push(setForceUpdateVersionInfo(newVersion));
+      } else {
+        actions.push(setForceUpdateVersionInfo(undefined));
+      }
+
+      dispatch(...actions);
+      return newVersion;
+    });
   }
 
-  async checkAppUpdate(): Promise<VersionInfo | undefined> {
+  private async checkAppUpdate(): Promise<VersionInfo | undefined> {
+    const packageInfo: PackageInfo | undefined =
+      await this.getPackageInfo().catch(
+        () =>
+          store.getState().settings?.softwareUpdate?.forceUpdateVersionInfo
+            ?.package,
+      );
+
+    if (packageInfo) {
+      if (!packageInfo) return undefined;
+
+      const currentVersion = store.getState().settings.version ?? '0.0.0';
+      const needUpdate = semver.gt(packageInfo.version, currentVersion);
+      const needForceUpdate = semver.gt(
+        packageInfo.forceUpdateVersion ?? '0.0.0',
+        currentVersion,
+      );
+
+      if (needUpdate || needForceUpdate) {
+        return {
+          package: packageInfo,
+          forceUpdate: needForceUpdate,
+        };
+      }
+
+      //  没有更新
+      return undefined;
+    }
+  }
+
+  async getPackageInfo() {
     const { enable, preReleaseUpdate } =
       store.getState().settings.devMode || {};
 
@@ -52,20 +104,16 @@ class AppUpdates {
 
     let packageInfo: PackageInfo | undefined;
 
-    if (platformEnv.isMas) {
-      packageInfo = releasePackages?.desktop?.find((x) => x.os === 'mas');
-    }
-
     if (platformEnv.isNativeAndroid) {
-      if (platformEnv.isNativeAndroidGooglePlay) {
-        packageInfo = releasePackages?.android?.find(
-          (x) => x.os === 'android' && x.channel === 'GooglePlay',
-        );
-      } else {
-        packageInfo = releasePackages?.android?.find(
-          (x) => x.os === 'android' && x.channel === 'Direct',
-        );
+      let channel = 'Direct';
+      if (platformEnv.isNativeAndroidHuawei) {
+        channel = 'HuaweiAppGallery';
+      } else if (platformEnv.isNativeAndroidGooglePlay) {
+        channel = 'GooglePlay';
       }
+      packageInfo = releasePackages?.android?.find(
+        (x) => x.os === 'android' && x.channel === channel,
+      );
     }
 
     if (platformEnv.isNativeIOS) {
@@ -73,30 +121,56 @@ class AppUpdates {
     }
 
     if (platformEnv.isDesktop) {
-      if (platformEnv.isDesktopLinux) {
+      if (platformEnv.isDesktopLinuxSnap) {
+        packageInfo = releasePackages?.desktop?.find(
+          (x) => x.os === 'linux' && x.channel === 'LinuxSnap',
+        );
+      } else if (platformEnv.isDesktopLinux) {
         packageInfo = releasePackages?.desktop?.find((x) => x.os === 'linux');
       }
-    }
 
-    if (packageInfo) {
-      if (
-        !packageInfo ||
-        // localVersion >= releaseVersion
-        semver.gte(
-          store.getState().settings.version ?? '0.0.0',
-          packageInfo.version,
-        )
-      ) {
-        //  没有更新
-        return undefined;
+      if (platformEnv.isDesktopWinMsStore) {
+        packageInfo = releasePackages?.desktop?.find(
+          (x) => x.os === 'win' && x.channel === 'MsWindowsStore',
+        );
+      } else if (platformEnv.isDesktopWin) {
+        packageInfo = releasePackages?.desktop?.find((x) => x.os === 'win');
       }
 
-      return {
-        package: packageInfo,
-      };
+      if (platformEnv.isMas) {
+        packageInfo = releasePackages?.desktop?.find((x) => x.os === 'mas');
+      } else if (platformEnv.isDesktopMacArm64) {
+        packageInfo = releasePackages?.desktop?.find(
+          (x) => x.os === 'macos-arm64',
+        );
+      } else if (platformEnv.isDesktopMac) {
+        packageInfo = releasePackages?.desktop?.find(
+          (x) => x.os === 'macos-x64',
+        );
+      }
     }
 
-    return undefined;
+    if (platformEnv.isExtension) {
+      if (platformEnv.isExtFirefox) {
+        packageInfo = releasePackages?.extension?.find(
+          (x) => x.os === 'firefox',
+        );
+      }
+      if (platformEnv.isExtChrome) {
+        packageInfo = releasePackages?.extension?.find(
+          (x) => x.os === 'chrome',
+        );
+      }
+      if (platformEnv.isExtEdge) {
+        packageInfo = releasePackages?.extension?.find((x) => x.os === 'edge');
+      }
+    }
+
+    if (platformEnv.isWeb) {
+      packageInfo = releasePackages?.web?.find((x) => x.os === 'website');
+    }
+
+    return packageInfo;
   }
 
   checkDesktopUpdate(isManual = false) {
@@ -107,22 +181,59 @@ class AppUpdates {
   openAppUpdate(versionInfo: VersionInfo): void {
     switch (versionInfo.package.channel) {
       case 'AppStore':
-        Linking.canOpenURL('itms-apps://').then((supported) => {
+        canOpenURL('itms-apps://').then((supported) => {
           if (supported) {
-            Linking.openURL('itms-apps://itunes.apple.com/app/id1609559473');
+            LinkingOpenURL('itms-apps://itunes.apple.com/app/id1609559473');
           } else {
             this._openUrl(versionInfo.package.download);
           }
         });
         break;
       case 'GooglePlay':
-        Linking.canOpenURL('market://').then((supported) => {
-          if (supported) {
-            Linking.openURL('market://details?id=so.onekey.app.wallet');
-          } else {
-            this._openUrl(versionInfo.package.download);
-          }
-        });
+        canOpenURL('market://details?id=so.onekey.app.wallet').then(
+          (supported) => {
+            if (supported) {
+              LinkingOpenURL('market://details?id=so.onekey.app.wallet');
+            } else {
+              LinkingOpenURL(versionInfo.package.download);
+            }
+          },
+        );
+        break;
+      case 'HuaweiAppGallery':
+        canOpenURL('hiapplink://com.huawei.appmarket?appId=C107439249')
+          .then((supported) => {
+            if (supported) {
+              LinkingOpenURL(
+                'hiapplink://com.huawei.appmarket?appId=C107439249',
+              );
+              return null;
+            }
+            return canOpenURL('market://details?id=so.onekey.app.wallet');
+          })
+          .then((supported) => {
+            if (!supported) return null;
+
+            if (supported) {
+              LinkingOpenURL('market://details?id=so.onekey.app.wallet');
+            } else {
+              LinkingOpenURL(versionInfo.package.download);
+            }
+          });
+
+        break;
+      case 'MsWindowsStore':
+        // check ms-windows-store protocol support
+        canOpenURL('ms-windows-store://pdp/?productid=XPFMHZDDF91TNL').then(
+          (supported) => {
+            if (supported) {
+              return LinkingOpenURL(
+                'ms-windows-store://pdp/?productid=XPFMHZDDF91TNL',
+              );
+            }
+            return LinkingOpenURL(versionInfo.package.download);
+          },
+        );
         break;
       default:
         this._openUrl(versionInfo.package.download);
@@ -134,7 +245,17 @@ class AppUpdates {
     oldVersion: string,
     newVersion: string,
   ): Promise<string | undefined> {
-    const releaseInfo = await getChangeLog(oldVersion, newVersion);
+    const { enable, preReleaseUpdate } =
+      store.getState().settings.devMode || {};
+
+    const preUpdateMode = enable && preReleaseUpdate;
+
+    const releaseInfo = await getChangeLog(
+      oldVersion,
+      newVersion,
+      preUpdateMode,
+    );
+
     if (!releaseInfo) return;
 
     let locale = store.getState().settings.locale ?? 'en-US';
@@ -147,7 +268,7 @@ class AppUpdates {
 
   _openUrl(url: string) {
     if (platformEnv.isNative) {
-      Linking.openURL(url);
+      LinkingOpenURL(url);
     } else {
       window.open(url, '_blank');
     }

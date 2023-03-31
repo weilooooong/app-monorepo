@@ -16,7 +16,11 @@ import {
 import { getWalletIdFromAccountId } from '@onekeyhq/engine/src/managers/account';
 import type { Account as BaseAccount } from '@onekeyhq/engine/src/types/account';
 import type { IEncodedTxEvm } from '@onekeyhq/engine/src/vaults/impl/evm/Vault';
-import type { IEncodedTx, ISwapInfo } from '@onekeyhq/engine/src/vaults/types';
+import type {
+  IDecodedTx,
+  IEncodedTx,
+  ISwapInfo,
+} from '@onekeyhq/engine/src/vaults/types';
 import { OnekeyNetwork } from '@onekeyhq/shared/src/config/networkIds';
 import {
   AppUIEventBusNames,
@@ -28,23 +32,24 @@ import { useNavigation } from '../../hooks';
 import { useActiveWalletAccount, useAppSelector } from '../../hooks/redux';
 import { ModalRoutes, RootRoutes } from '../../routes/types';
 import { addTransaction } from '../../store/reducers/swapTransactions';
-import { deviceUtils } from '../../utils/hardware';
 import { wait } from '../../utils/helper';
 import { canShowAppReview, openAppReview } from '../../utils/openAppReview';
 import { showOverlay } from '../../utils/overlayUtils';
-import { SendRoutes } from '../Send/types';
+import { SendModalRoutes } from '../Send/types';
 
-import { reservedNetworkFee } from './config';
 import {
-  useDerivedSwapState,
+  useCheckInputBalance,
   useInputLimitsError,
   useSwapError,
   useSwapQuoteRequestParams,
 } from './hooks/useSwap';
+import { useSwapSend } from './hooks/useSwapSend';
 import { SwapQuoter } from './quoter';
 import { dangerRefs } from './refs';
 import { SwapError, SwapRoutes } from './typings';
 import {
+  TokenAmount,
+  calculateDecodedTxNetworkFee,
   formatAmount,
   getTokenAmountString,
   getTokenAmountValue,
@@ -55,9 +60,9 @@ import type {
   BuildTransactionResponse,
   FetchQuoteParams,
   QuoteData,
+  Recipient,
   TransactionToken,
 } from './typings';
-import type { TokenAmount } from './utils';
 
 type IConvertToSwapInfoOptions = {
   swapQuote: QuoteData;
@@ -71,6 +76,156 @@ type IConvertToSwapInfoOptions = {
 type SwapTransactionsCancelApprovalBottomSheetModalProps = {
   close: () => void;
   onSubmit: () => void;
+};
+
+type Task = (nextTask?: () => Promise<void>) => Promise<void>;
+
+async function combinedTasks(tasks: Task[]) {
+  let index = 0;
+
+  async function next() {
+    if (index < tasks.length) {
+      const callback = tasks[index];
+      index += 1;
+      await callback(next);
+    }
+  }
+
+  await next();
+}
+
+const addSwapTransaction = async ({
+  hash,
+  decodedTx,
+  params,
+  response,
+  recipient,
+  quote,
+}: {
+  hash: string;
+  decodedTx?: IDecodedTx;
+  params: BuildTransactionParams;
+  response: BuildTransactionResponse;
+  recipient: Recipient;
+  quote: QuoteData;
+}) => {
+  const newQuote = response?.result;
+  if (response === undefined || newQuote === undefined) {
+    return;
+  }
+  backgroundApiProxy.serviceSwap.clearState();
+  const sellAmount = newQuote.sellAmount || quote.sellAmount;
+  const buyAmount = newQuote.buyAmount || quote.buyAmount;
+  const quoterType = quote.type;
+  const quoterLogo = quote.quoterlogo;
+  const fromNetwork = await backgroundApiProxy.engine.getNetwork(
+    params.tokenIn.networkId,
+  );
+  const toNetwork = await backgroundApiProxy.engine.getNetwork(
+    params.tokenIn.networkId,
+  );
+  const inputAmount = getTokenAmountValue(params.tokenIn, sellAmount);
+  const outputAmount = getTokenAmountValue(params.tokenOut, buyAmount);
+  const nonce = decodedTx?.nonce;
+
+  let networkFee: string | undefined;
+  if (decodedTx) {
+    networkFee = calculateDecodedTxNetworkFee(decodedTx, fromNetwork);
+  }
+
+  const from: TransactionToken = {
+    networkId: params.tokenIn.networkId,
+    token: params.tokenIn,
+    amount:
+      formatAmount(
+        new BigNumber(newQuote.sellAmount).shiftedBy(-params.tokenIn.decimals),
+      ) || formatAmount(inputAmount),
+  };
+  const to: TransactionToken = {
+    networkId: params.tokenOut.networkId,
+    token: params.tokenOut,
+    amount:
+      formatAmount(
+        new BigNumber(newQuote.buyAmount).shiftedBy(-params.tokenOut.decimals),
+      ) || formatAmount(outputAmount),
+  };
+  backgroundApiProxy.dispatch(
+    addTransaction({
+      accountId: params.activeAccount.id,
+      networkId: params.tokenIn.networkId,
+      transaction: {
+        hash,
+        from: params.activeAccount.address,
+        addedTime: Date.now(),
+        status: 'pending',
+        type: 'swap',
+        accountId: params.activeAccount.id,
+        networkId: params.tokenIn.networkId,
+        quoterType,
+        quoterLogo,
+        nonce,
+        attachment: response.attachment,
+        receivingAccountId: recipient?.accountId,
+        receivingAddress: recipient?.address,
+        providers: newQuote?.sources ?? quote.providers,
+        arrivalTime: quote.arrivalTime,
+        percentageFee: quote.percentageFee,
+        protocalFees: quote.protocolFees,
+        networkFee,
+        tokens: {
+          from,
+          to,
+          rate: Number(newQuote?.instantRate ?? quote.instantRate),
+        },
+      },
+    }),
+  );
+
+  backgroundApiProxy.serviceSwap.resetSwapSlippage();
+  backgroundApiProxy.serviceToken.addAccountToken(
+    params.tokenIn.networkId,
+    params.activeAccount.id,
+    params.tokenIn.tokenIdOnNetwork,
+  );
+  if (params.tokenIn.networkId === params.tokenOut.networkId) {
+    backgroundApiProxy.serviceToken.addAccountToken(
+      params.tokenOut.networkId,
+      params.activeAccount.id,
+      params.tokenOut.tokenIdOnNetwork,
+    );
+  }
+  if (
+    response.result?.quoter === 'swftc' &&
+    response.attachment?.swftcOrderId
+  ) {
+    SwapQuoter.client.swftModifyTxId(response.attachment?.swftcOrderId, hash);
+  }
+  const fromNetworkName = fromNetwork?.shortName;
+  const toNetworkName = toNetwork?.shortName;
+  backgroundApiProxy.serviceSwap.addRecord({
+    txid: hash,
+    from: {
+      networkId: from.networkId,
+      networkName: fromNetworkName ?? '',
+      tokenAddress: from.token.tokenIdOnNetwork,
+      tokenName: from.token.name,
+      amount: from.amount,
+    },
+    to: {
+      networkId: to.networkId,
+      networkName: toNetworkName ?? '',
+      tokenAddress: to.token.tokenIdOnNetwork,
+      tokenName: to.token.name,
+      amount: to.amount,
+    },
+    params,
+    response,
+  });
+  const show = await canShowAppReview();
+  if (show) {
+    await wait(2000);
+    openAppReview();
+  }
 };
 
 function convertToSwapInfo(options: IConvertToSwapInfoOptions): ISwapInfo {
@@ -150,29 +305,34 @@ const SwapTransactionsCancelApprovalBottomSheetModal: FC<
 
 const ExchangeButton = () => {
   const intl = useIntl();
-
+  const navigation = useNavigation();
   const ref = useRef(false);
   const [loading, setLoading] = useState(false);
-  const navigation = useNavigation();
-  const networks = useAppSelector((s) => s.runtime.networks);
   const quote = useAppSelector((s) => s.swap.quote);
-  const sendingAccount = useAppSelector((s) => s.swap.sendingAccount);
-  const recipient = useAppSelector((s) => s.swap.recipient);
-  const validationSetting = useAppSelector((s) => s.settings.validationSetting);
-  const { inputAmount, outputAmount } = useDerivedSwapState();
   const params = useSwapQuoteRequestParams();
   const disableSwapExactApproveAmount = useAppSelector(
     (s) => s.settings.disableSwapExactApproveAmount,
   );
 
+  const sendSwapTx = useSwapSend();
+
   const onSubmit = useCallback(async () => {
-    if (!params || !sendingAccount || !quote || !inputAmount || !outputAmount) {
+    const recipient = await backgroundApiProxy.serviceSwap.getRecipient();
+    if (!params || !quote || !recipient) {
       ToastManager.show({
         title: intl.formatMessage({ id: 'msg__unknown_error' }),
       });
       return;
     }
-
+    const sendingAccount = params.activeAccount;
+    const inputAmount = new TokenAmount(
+      params.tokenIn,
+      getTokenAmountValue(params.tokenIn, quote.sellAmount).toFixed(),
+    );
+    const outputAmount = new TokenAmount(
+      params.tokenOut,
+      getTokenAmountValue(params.tokenOut, quote.buyAmount).toFixed(),
+    );
     const accountInWallets =
       await backgroundApiProxy.serviceSwap.checkAccountInWallets(
         sendingAccount.id,
@@ -191,10 +351,13 @@ const ExchangeButton = () => {
       return;
     }
 
-    const targetNetworkId = inputAmount.token.networkId;
+    const fromNetworkId = params.tokenIn.networkId;
 
-    const targetNetwork = networks.find((item) => item.id === targetNetworkId);
-    if (!targetNetwork) {
+    const fromNetwork = await backgroundApiProxy.engine.getNetwork(
+      fromNetworkId,
+    );
+
+    if (!fromNetwork) {
       ToastManager.show({
         title: intl.formatMessage({ id: 'msg__unknown_error' }),
       });
@@ -202,12 +365,16 @@ const ExchangeButton = () => {
     }
 
     if (!params.tokenIn.tokenIdOnNetwork) {
-      const [result] = await backgroundApiProxy.serviceToken.fetchTokenBalance({
-        activeAccountId: sendingAccount.id,
-        activeNetworkId: targetNetwork.id,
-      });
+      const [result] =
+        await backgroundApiProxy.serviceToken.getAccountTokenBalance({
+          accountId: sendingAccount.id,
+          networkId: fromNetwork.id,
+        });
       const balance = new BigNumber(result?.main?.balance ?? '0');
-      const reservedValue = reservedNetworkFee[targetNetwork.id] ?? 0.1;
+      const reservedValue =
+        await backgroundApiProxy.serviceSwap.getReservedNetworkFee(
+          fromNetwork.id,
+        );
       if (balance.minus(inputAmount.typedValue).lt(reservedValue)) {
         ToastManager.show({
           title: intl.formatMessage(
@@ -310,10 +477,10 @@ const ExchangeButton = () => {
 
       const needCancelApproval =
         needApproved &&
-        ((targetNetworkId === OnekeyNetwork.eth &&
+        ((fromNetworkId === OnekeyNetwork.eth &&
           params.tokenIn.tokenIdOnNetwork.toLowerCase() ===
             '0xdac17f958d2ee523a2206206994597c13d831ec7') ||
-          (targetNetworkId === OnekeyNetwork.heco &&
+          (fromNetworkId === OnekeyNetwork.heco &&
             params.tokenIn.tokenIdOnNetwork.toLowerCase() ===
               '0x897442804e4c8ac3a28fadb217f08b401411183e')) &&
         Number(allowance || '0') > 0;
@@ -323,7 +490,7 @@ const ExchangeButton = () => {
             spender: newQuote.allowanceTarget,
             networkId: params.tokenIn.networkId,
             accountId: sendingAccount.id,
-            token: inputAmount.token.tokenIdOnNetwork,
+            token: params.tokenIn.tokenIdOnNetwork,
             amount: '0',
           })) as IEncodedTxEvm;
       }
@@ -331,16 +498,13 @@ const ExchangeButton = () => {
       if (needApproved) {
         const amount = disableSwapExactApproveAmount
           ? 'unlimited'
-          : getTokenAmountValue(
-              inputAmount.token,
-              newQuote.sellAmount,
-            ).toFixed();
+          : getTokenAmountValue(params.tokenIn, newQuote.sellAmount).toFixed();
 
         approveTx = (await backgroundApiProxy.engine.buildEncodedTxFromApprove({
           spender: newQuote.allowanceTarget,
           networkId: params.tokenIn.networkId,
           accountId: sendingAccount.id,
-          token: inputAmount.token.tokenIdOnNetwork,
+          token: params.tokenIn.tokenIdOnNetwork,
           amount,
         })) as IEncodedTxEvm;
 
@@ -350,397 +514,117 @@ const ExchangeButton = () => {
       }
     }
 
-    const addSwapTransaction = async (hash: string, nonce?: number) => {
-      if (res === undefined) {
-        return;
-      }
-      const from: TransactionToken = {
-        networkId: inputAmount.token.networkId,
-        token: inputAmount.token,
-        amount:
-          formatAmount(
-            new BigNumber(newQuote.sellAmount).shiftedBy(
-              -inputAmount.token.decimals,
-            ),
-          ) || inputAmount.typedValue,
-      };
-      const to: TransactionToken = {
-        networkId: outputAmount.token.networkId,
-        token: outputAmount.token,
-        amount:
-          formatAmount(
-            new BigNumber(newQuote.buyAmount).shiftedBy(
-              -outputAmount.token.decimals,
-            ),
-          ) || outputAmount.typedValue,
-      };
-      backgroundApiProxy.dispatch(
-        addTransaction({
-          accountId: sendingAccount.id,
-          networkId: targetNetwork.id,
-          transaction: {
-            hash,
-            from: sendingAccount.address,
-            addedTime: Date.now(),
-            status: 'pending',
-            type: 'swap',
-            accountId: sendingAccount.id,
-            networkId: targetNetwork.id,
-            quoterType: quote.type,
-            nonce,
-            attachment: res.attachment,
-            receivingAddress: recipient?.address,
-            providers: newQuote?.sources ?? quote.providers,
-            arrivalTime: quote.arrivalTime,
-            percentageFee: quote.percentageFee,
-            tokens: {
-              from,
-              to,
-              rate: Number(res?.result?.instantRate ?? quote.instantRate),
+    const tasks: Task[] = [];
+
+    const doSwap = async () => {
+      await sendSwapTx({
+        accountId: sendingAccount.id,
+        networkId: fromNetworkId,
+        gasEstimateFallback: true,
+        encodedTx: encodedTx as IEncodedTxEvm,
+        showSendFeedbackReceipt: true,
+        payloadInfo: {
+          type: 'InternalSwap',
+          swapInfo,
+        },
+        onDetail(txid) {
+          navigation.navigate(RootRoutes.Modal, {
+            screen: ModalRoutes.Swap,
+            params: {
+              screen: SwapRoutes.Transaction,
+              params: {
+                txid,
+              },
             },
-          },
-        }),
-      );
-      backgroundApiProxy.serviceSwap.clearState();
-      backgroundApiProxy.serviceSwap.resetSwapSlippage();
-      backgroundApiProxy.serviceToken.addAccountToken(
-        inputAmount.token.networkId,
-        sendingAccount.id,
-        inputAmount.token.tokenIdOnNetwork,
-      );
-      if (inputAmount.token.networkId === outputAmount.token.networkId) {
-        backgroundApiProxy.serviceToken.addAccountToken(
-          outputAmount.token.networkId,
-          sendingAccount.id,
-          outputAmount.token.tokenIdOnNetwork,
-        );
-      }
-      if (res.result?.quoter === 'swftc' && res.attachment?.swftcOrderId) {
-        SwapQuoter.client.swftModifyTxId(res.attachment?.swftcOrderId, hash);
-      }
-      const fromNetworkName = networks.find(
-        (item) => item.id === from.networkId,
-      )?.shortName;
-      const toNetworkName = networks.find(
-        (item) => item.id === to.networkId,
-      )?.shortName;
-      backgroundApiProxy.serviceSwap.addRecord({
-        txid: hash,
-        from: {
-          networkId: from.networkId,
-          networkName: fromNetworkName ?? '',
-          tokenAddress: from.token.tokenIdOnNetwork,
-          tokenName: from.token.name,
-          amount: from.amount,
+          });
         },
-        to: {
-          networkId: to.networkId,
-          networkName: toNetworkName ?? '',
-          tokenAddress: to.token.tokenIdOnNetwork,
-          tokenName: to.token.name,
-          amount: to.amount,
+        onSuccess: async ({ result, decodedTx }) => {
+          if (!res) {
+            return;
+          }
+          await addSwapTransaction({
+            hash: result.txid,
+            decodedTx,
+            params: buildParams,
+            response: res,
+            quote,
+            recipient,
+          });
+          appUIEventBus.emit(AppUIEventBusNames.SwapCompleted);
         },
-        params: buildParams,
-        response: res,
+        onFail: () => {
+          appUIEventBus.emit(AppUIEventBusNames.SwapError);
+        },
       });
-      const show = await canShowAppReview();
-      if (show) {
-        await wait(2000);
-        openAppReview();
-      }
     };
 
-    const main = async (options?: { skipSendFeedbackReceipt?: boolean }) => {
-      try {
-        if (wallet.type === 'hw') {
-          if (approveTx) {
-            await backgroundApiProxy.serviceSwap.sendTransaction({
-              accountId: sendingAccount.id,
-              networkId: targetNetworkId,
-              encodedTx: approveTx,
-              autoFallback: Boolean(cancelApproveTx),
-            });
-            navigation.navigate(RootRoutes.Modal, {
-              screen: ModalRoutes.Send,
-              params: {
-                screen: SendRoutes.HardwareSwapContinue,
-                params: {
-                  networkId: targetNetworkId,
-                  accountId: sendingAccount.id,
-                },
-              },
-            });
-          }
-          try {
-            const { result, decodedTx } =
-              await backgroundApiProxy.serviceSwap.sendTransaction({
-                accountId: sendingAccount.id,
-                networkId: targetNetworkId,
-                autoFallback: true,
-                encodedTx: encodedTx as IEncodedTxEvm,
-                payload: {
-                  type: 'InternalSwap',
-                  swapInfo,
-                },
-              });
-            addSwapTransaction(result.txid, decodedTx.nonce);
-            appUIEventBus.emit(AppUIEventBusNames.SwapCompleted);
-          } catch (e: any) {
-            deviceUtils.showErrorToast(e, e?.data?.message || e.message);
-            appUIEventBus.emit(AppUIEventBusNames.SwapError);
-          }
-        } else if (wallet.type === 'external') {
-          const sendTx = () => {
-            navigation.navigate(RootRoutes.Modal, {
-              screen: ModalRoutes.Send,
-              params: {
-                screen: SendRoutes.SendConfirm,
-                params: {
-                  accountId: sendingAccount.id,
-                  networkId: targetNetworkId,
-                  payloadInfo: {
-                    type: 'InternalSwap',
-                    swapInfo,
-                  },
-                  feeInfoEditable: true,
-                  feeInfoUseFeeInTx: false,
-                  encodedTx,
-                  onDetail(txid) {
-                    navigation.navigate(RootRoutes.Modal, {
-                      screen: ModalRoutes.Swap,
-                      params: {
-                        screen: SwapRoutes.Transaction,
-                        params: {
-                          txid,
-                        },
-                      },
-                    });
-                  },
-                  onSuccess: (tx, data) => {
-                    addSwapTransaction(tx.txid, data?.decodedTx?.nonce);
-                  },
-                },
-              },
-            });
-          };
-          if (approveTx) {
-            navigation.navigate(RootRoutes.Modal, {
-              screen: ModalRoutes.Send,
-              params: {
-                screen: SendRoutes.SendConfirm,
-                params: {
-                  accountId: sendingAccount.id,
-                  networkId: targetNetworkId,
-                  payloadInfo: {
-                    type: 'InternalSwap',
-                  },
-                  feeInfoEditable: true,
-                  feeInfoUseFeeInTx: false,
-                  encodedTx: approveTx,
-                  onSuccess: sendTx,
-                },
-              },
-            });
-          } else {
-            sendTx();
-          }
-        } else {
-          const password =
-            await backgroundApiProxy.servicePassword.getPassword();
-          if (password && !validationSetting?.Payment) {
-            if (approveTx) {
-              await backgroundApiProxy.serviceSwap.sendTransaction({
-                accountId: sendingAccount.id,
-                networkId: targetNetworkId,
-                encodedTx: approveTx,
-                autoFallback: Boolean(cancelApproveTx),
-              });
-            }
-            const { result, decodedTx } =
-              await backgroundApiProxy.serviceSwap.sendTransaction({
-                accountId: sendingAccount.id,
-                networkId: targetNetworkId,
-                autoFallback: !!approveTx,
-                encodedTx: encodedTx as IEncodedTxEvm,
-                payload: {
-                  type: 'InternalSwap',
-                  swapInfo,
-                },
-              });
-            addSwapTransaction(result.txid, decodedTx.nonce);
-            if (options?.skipSendFeedbackReceipt) {
-              return;
-            }
-            navigation.navigate(RootRoutes.Modal, {
-              screen: ModalRoutes.Send,
-              params: {
-                screen: SendRoutes.SendFeedbackReceipt,
-                params: {
-                  networkId: targetNetworkId,
-                  accountId: sendingAccount.id,
-                  txid: result.txid,
-                  type: 'Send',
-                },
-              },
-            });
-          } else {
-            if (approveTx !== undefined) {
+    tasks.unshift(doSwap);
+
+    if (approveTx) {
+      const doApprove = async (nextTask?: Task) => {
+        const payloadInfo: any = { type: 'InternalSwap' };
+        if (wallet.type !== 'external') {
+          payloadInfo.swapInfo = { ...swapInfo, isApprove: true };
+        }
+        await sendSwapTx({
+          accountId: sendingAccount.id,
+          networkId: fromNetworkId,
+          payloadInfo,
+          encodedTx: approveTx as IEncodedTxEvm,
+          gasEstimateFallback: Boolean(cancelApproveTx),
+          onSuccess: async () => {
+            if (wallet.type === 'hw') {
               navigation.navigate(RootRoutes.Modal, {
                 screen: ModalRoutes.Send,
                 params: {
-                  screen: SendRoutes.SendConfirm,
+                  screen: SendModalRoutes.HardwareSwapContinue,
                   params: {
+                    networkId: fromNetworkId,
                     accountId: sendingAccount.id,
-                    networkId: targetNetworkId,
-                    feeInfoEditable: true,
-                    feeInfoUseFeeInTx: false,
-                    encodedTx: approveTx,
-                    payloadInfo: {
-                      type: 'InternalSwap',
-                      swapInfo: { ...swapInfo, isApprove: true },
-                    },
-                    onSuccess: async () => {
-                      const { result, decodedTx } =
-                        await backgroundApiProxy.serviceSwap.sendTransaction({
-                          accountId: sendingAccount.id,
-                          networkId: targetNetworkId,
-                          encodedTx: encodedTx as IEncodedTxEvm,
-                          autoFallback: true,
-                          payload: {
-                            type: 'InternalSwap',
-                            swapInfo,
-                          },
-                        });
-                      addSwapTransaction(result.txid, decodedTx.nonce);
-                    },
-                  },
-                },
-              });
-              return;
-            }
-            navigation.navigate(RootRoutes.Modal, {
-              screen: ModalRoutes.Send,
-              params: {
-                screen: SendRoutes.SendConfirm,
-                params: {
-                  accountId: sendingAccount.id,
-                  networkId: targetNetworkId,
-                  feeInfoEditable: true,
-                  feeInfoUseFeeInTx: false,
-                  encodedTx: encodedTx as IEncodedTxEvm,
-                  payloadInfo: {
-                    type: 'InternalSwap',
-                    swapInfo,
-                  },
-                  onDetail(txid) {
-                    navigation.navigate(RootRoutes.Modal, {
-                      screen: ModalRoutes.Swap,
-                      params: {
-                        screen: SwapRoutes.Transaction,
-                        params: {
-                          txid,
-                        },
-                      },
-                    });
-                  },
-                  onSuccess: (tx, data) => {
-                    addSwapTransaction(tx.txid, data?.decodedTx?.nonce);
-                  },
-                },
-              },
-            });
-          }
-        }
-      } catch (e: any) {
-        deviceUtils.showErrorToast(e, e?.data?.message || e.message);
-      }
-    };
-
-    if (cancelApproveTx !== undefined) {
-      const onCancelApprovalSubmit = async () => {
-        try {
-          if (wallet.type === 'hw') {
-            await backgroundApiProxy.serviceSwap.sendTransaction({
-              accountId: sendingAccount.id,
-              networkId: targetNetworkId,
-              encodedTx: cancelApproveTx as IEncodedTxEvm,
-            });
-            await main();
-          } else if (wallet.type === 'external') {
-            navigation.navigate(RootRoutes.Modal, {
-              screen: ModalRoutes.Send,
-              params: {
-                screen: SendRoutes.SendConfirm,
-                params: {
-                  accountId: sendingAccount.id,
-                  networkId: targetNetworkId,
-                  payloadInfo: {
-                    type: 'InternalSwap',
-                  },
-                  feeInfoEditable: true,
-                  feeInfoUseFeeInTx: false,
-                  encodedTx: cancelApproveTx,
-                  onSuccess: () => main(),
-                },
-              },
-            });
-          } else {
-            const password =
-              await backgroundApiProxy.servicePassword.getPassword();
-            if (password && !validationSetting?.Payment) {
-              await backgroundApiProxy.serviceSwap.sendTransaction({
-                accountId: sendingAccount.id,
-                networkId: targetNetworkId,
-                encodedTx: cancelApproveTx as IEncodedTxEvm,
-              });
-              await main();
-            } else {
-              navigation.navigate(RootRoutes.Modal, {
-                screen: ModalRoutes.Send,
-                params: {
-                  screen: SendRoutes.SendConfirm,
-                  params: {
-                    accountId: sendingAccount.id,
-                    networkId: targetNetworkId,
-                    feeInfoEditable: true,
-                    feeInfoUseFeeInTx: false,
-                    encodedTx: cancelApproveTx as IEncodedTxEvm,
-                    payloadInfo: {
-                      type: 'InternalSwap',
-                      swapInfo: { ...swapInfo, isApprove: true },
-                    },
-                    onSuccess: () => main({ skipSendFeedbackReceipt: true }),
                   },
                 },
               });
             }
-          }
-        } catch (e: any) {
-          deviceUtils.showErrorToast(e, e?.data?.message || e.message);
-        }
+            await nextTask?.();
+          },
+        });
       };
+      tasks.unshift(doApprove);
+    }
+
+    if (cancelApproveTx) {
+      const doCancelApprove = async (nextTask?: Task) => {
+        const payloadInfo: any = { type: 'InternalSwap' };
+        if (wallet.type !== 'external') {
+          payloadInfo.swapInfo = { ...swapInfo, isApprove: true };
+        }
+        await sendSwapTx({
+          accountId: sendingAccount.id,
+          networkId: fromNetworkId,
+          payloadInfo,
+          encodedTx: cancelApproveTx as IEncodedTxEvm,
+          gasEstimateFallback: Boolean(cancelApproveTx),
+          onSuccess: async () => {
+            await nextTask?.();
+          },
+        });
+      };
+      tasks.unshift(doCancelApprove);
+    }
+
+    if (cancelApproveTx) {
       showOverlay((close) => (
         <SwapTransactionsCancelApprovalBottomSheetModal
           close={close}
-          onSubmit={onCancelApprovalSubmit}
+          onSubmit={() => combinedTasks(tasks)}
         />
       ));
     } else {
-      await main();
+      await combinedTasks(tasks);
     }
     await wait(1000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    params,
-    quote,
-    sendingAccount,
-    inputAmount,
-    outputAmount,
-    addTransaction,
-    disableSwapExactApproveAmount,
-    recipient?.address,
-    validationSetting,
-  ]);
+  }, [params, quote, disableSwapExactApproveAmount]);
 
   const onPress = useCallback(async () => {
     if (ref.current) {
@@ -764,7 +648,7 @@ const ExchangeButton = () => {
       size="xl"
       type="primary"
       isLoading={loading}
-      isDisabled={!quote || !recipient}
+      isDisabled={!quote}
       onPress={onPress}
     >
       {intl.formatMessage({ id: 'title__swap' })}
@@ -772,7 +656,7 @@ const ExchangeButton = () => {
   );
 };
 
-const SwapStateButton = () => {
+const SwapExchangeStateButton = () => {
   const intl = useIntl();
   const inputToken = useAppSelector((s) => s.swap.inputToken);
   const loading = useAppSelector((s) => s.swap.loading);
@@ -827,6 +711,119 @@ const SwapStateButton = () => {
   return <ExchangeButton />;
 };
 
+const SwapWrapButton = () => {
+  const intl = useIntl();
+  const [loading, setLoading] = useState(false);
+  const wrapperTxInfo = useAppSelector((s) => s.swap.quote?.wrapperTxInfo);
+  const params = useSwapQuoteRequestParams();
+  const sendTx = useSwapSend();
+  const onSubmit = useCallback(async () => {
+    if (params && wrapperTxInfo) {
+      const { tokenIn, activeAccount } = params;
+      setLoading(true);
+      try {
+        await sendTx({
+          networkId: tokenIn.networkId,
+          accountId: activeAccount.id,
+          encodedTx: wrapperTxInfo.encodedTx,
+          showSendFeedbackReceipt: true,
+          onSuccess: async ({ result, decodedTx }) => {
+            let networkFee: string | undefined;
+            const targetNetwork = await backgroundApiProxy.engine.getNetwork(
+              tokenIn.networkId,
+            );
+            if (decodedTx && targetNetwork) {
+              networkFee = calculateDecodedTxNetworkFee(
+                decodedTx,
+                targetNetwork,
+              );
+            }
+            backgroundApiProxy.dispatch(
+              addTransaction({
+                accountId: activeAccount.id,
+                networkId: tokenIn.networkId,
+                transaction: {
+                  hash: result.txid,
+                  from: activeAccount.address,
+                  addedTime: Date.now(),
+                  status: 'pending',
+                  type: 'swap',
+                  accountId: activeAccount.id,
+                  networkId: tokenIn.networkId,
+                  nonce: decodedTx?.nonce,
+                  receivingAccountId: activeAccount.id,
+                  receivingAddress: activeAccount.address,
+                  actualReceived: params.typedValue,
+                  arrivalTime: 30,
+                  networkFee,
+                  tokens: {
+                    from: {
+                      token: params.tokenIn,
+                      networkId: tokenIn.networkId,
+                      amount: params.typedValue,
+                    },
+                    to: {
+                      token: params.tokenOut,
+                      networkId: tokenIn.networkId,
+                      amount: params.typedValue,
+                    },
+                    rate: 1,
+                  },
+                },
+              }),
+            );
+            backgroundApiProxy.serviceSwap.clearState();
+          },
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+  }, [params, sendTx, wrapperTxInfo]);
+  if (params && wrapperTxInfo) {
+    return (
+      <Button
+        size="xl"
+        type="primary"
+        key="baseError"
+        onPress={onSubmit}
+        isLoading={loading}
+      >
+        {wrapperTxInfo.type === 'Deposite'
+          ? intl.formatMessage({ id: 'action__wrap' })
+          : intl.formatMessage({ id: 'action__unwrap' })}
+      </Button>
+    );
+  }
+  return null;
+};
+
+const SwapWrapStateButton = () => {
+  const intl = useIntl();
+  const balanceInfo = useCheckInputBalance();
+  if (balanceInfo && balanceInfo.insufficient) {
+    return (
+      <Button
+        size="xl"
+        type="primary"
+        isDisabled
+        key="insufficient_balance_error"
+      >
+        {intl.formatMessage(
+          { id: 'form__amount_invalid' },
+          { '0': balanceInfo.token.symbol },
+        )}
+      </Button>
+    );
+  }
+  return <SwapWrapButton />;
+};
+
+const SwapEnabledButton = () => {
+  const wrapperTxInfo = useAppSelector((s) => s.swap.quote?.wrapperTxInfo);
+  return wrapperTxInfo ? <SwapWrapStateButton /> : <SwapExchangeStateButton />;
+};
+
 const SwapButton = () => {
   const intl = useIntl();
   const navigation = useNavigation();
@@ -853,7 +850,7 @@ const SwapButton = () => {
     );
   }
 
-  return <SwapStateButton />;
+  return <SwapEnabledButton />;
 };
 
 export default SwapButton;

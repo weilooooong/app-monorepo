@@ -1,5 +1,5 @@
 import type { FC } from 'react';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import { useNavigation } from '@react-navigation/core';
 import { useIntl } from 'react-intl';
@@ -23,8 +23,8 @@ import {
   getActiveWalletAccount,
   useActiveWalletAccount,
 } from '@onekeyhq/kit/src/hooks/redux';
-import { ReceiveTokenRoutes } from '@onekeyhq/kit/src/routes/Modal/routes';
-import type { ReceiveTokenRoutesParams } from '@onekeyhq/kit/src/routes/Modal/types';
+import type { ReceiveTokenRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/types';
+import { ReceiveTokenModalRoutes } from '@onekeyhq/kit/src/routes/routesEnum';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
 import {
   ModalRoutes,
@@ -38,7 +38,6 @@ import backgroundApiProxy from '../../../background/instance/backgroundApiProxy'
 import { useAccountValues, useNavigationActions } from '../../../hooks';
 import { useCopyAddress } from '../../../hooks/useCopyAddress';
 import useOpenBlockBrowser from '../../../hooks/useOpenBlockBrowser';
-import { SWAP_TAB_NAME } from '../../../store/reducers/market';
 import { calculateGains } from '../../../utils/priceUtils';
 import AccountMoreMenu from '../../Overlay/AccountMoreMenu';
 import { showAccountValueSettings } from '../../Overlay/AccountValueSettings';
@@ -123,7 +122,10 @@ const AccountAmountInfo: FC = () => {
             _hover={{ bg: 'surface-hovered' }}
             _pressed={{ bg: 'surface-pressed' }}
             onPress={() => {
-              copyAddress(account?.displayAddress ?? account?.address);
+              copyAddress({
+                address: account?.address,
+                displayAddress: account?.displayAddress,
+              });
             }}
           >
             <Text
@@ -171,10 +173,31 @@ type AccountOptionProps = { isSmallView: boolean };
 const AccountOption: FC<AccountOptionProps> = ({ isSmallView }) => {
   const intl = useIntl();
   const navigation = useNavigation<NavigationProps['navigation']>();
-  const { wallet, account } = useActiveWalletAccount();
+  const { wallet, account, network } = useActiveWalletAccount();
   const isVertical = useIsVerticalLayout();
   const { sendToken } = useNavigationActions();
   const iconBoxFlex = isVertical ? 1 : 0;
+
+  const onSwap = useCallback(async () => {
+    const token = await backgroundApiProxy.engine.getNativeTokenInfo(
+      network?.id ?? '',
+    );
+    if (token) {
+      backgroundApiProxy.serviceSwap.sellToken(token);
+      if (account) {
+        backgroundApiProxy.serviceSwap.setSendingAccountSimple(account);
+        const paymentToken =
+          await backgroundApiProxy.serviceSwap.getPaymentToken(token);
+        if (paymentToken?.networkId === network?.id) {
+          backgroundApiProxy.serviceSwap.setRecipientToAccount(
+            account,
+            network,
+          );
+        }
+      }
+    }
+    navigation.getParent()?.navigate(TabRoutes.Swap);
+  }, [network, account, navigation]);
 
   return (
     <Box flexDirection="row" px={isVertical ? 1 : 0} mx={-3}>
@@ -213,7 +236,7 @@ const AccountOption: FC<AccountOptionProps> = ({ isSmallView }) => {
             navigation.navigate(RootRoutes.Modal, {
               screen: ModalRoutes.Receive,
               params: {
-                screen: ReceiveTokenRoutes.ReceiveToken,
+                screen: ReceiveTokenModalRoutes.ReceiveToken,
                 params: {},
               },
             });
@@ -238,16 +261,7 @@ const AccountOption: FC<AccountOptionProps> = ({ isSmallView }) => {
           name="ArrowsRightLeftOutline"
           type="basic"
           isDisabled={wallet?.type === 'watching' || !account}
-          onPress={() => {
-            if (isVertical) {
-              backgroundApiProxy.serviceMarket.switchMarketTopTab(
-                SWAP_TAB_NAME,
-              );
-              navigation.getParent()?.navigate(TabRoutes.Market);
-            } else {
-              navigation.getParent()?.navigate(TabRoutes.Swap);
-            }
-          }}
+          onPress={onSwap}
         />
         <Typography.CaptionStrong
           textAlign="center"

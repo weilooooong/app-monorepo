@@ -2,6 +2,7 @@ import type { FC } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useNavigation, useRoute } from '@react-navigation/core';
+import BigNumber from 'bignumber.js';
 import { BlurView } from 'expo-blur';
 import { useIntl } from 'react-intl';
 import { StyleSheet } from 'react-native';
@@ -39,12 +40,9 @@ import {
   getActiveWalletAccount,
   useActiveWalletAccount,
 } from '@onekeyhq/kit/src/hooks/redux';
-import type {
-  CollectiblesModalRoutes,
-  CollectiblesRoutesParams,
-} from '@onekeyhq/kit/src/routes/Modal/Collectibles';
+import type { CollectiblesRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/Collectibles';
+import { ModalRoutes, RootRoutes } from '@onekeyhq/kit/src/routes/routesEnum';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
-import { ModalRoutes, RootRoutes } from '@onekeyhq/kit/src/routes/types';
 import { generateUploadNFTParams } from '@onekeyhq/kit/src/utils/hardware/nftUtils';
 import NFTDetailMenu from '@onekeyhq/kit/src/views/Overlay/NFTDetailMenu';
 import { OnekeyNetwork } from '@onekeyhq/shared/src/config/networkIds';
@@ -53,14 +51,16 @@ import debugLogger from '@onekeyhq/shared/src/logger/debugLogger';
 import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
-import { SendRoutes } from '../../../../routes';
+import { SendModalRoutes } from '../../../../routes/routesEnum';
 import { deviceUtils } from '../../../../utils/hardware';
 import CollectionLogo from '../../../NFTMarket/CollectionLogo';
 import { useCollectionDetail } from '../../../NFTMarket/Home/hook';
+import { showAmountInputDialog } from '../AmountInputDialog';
 import { convertToMoneyFormat } from '../utils';
 
 import CollectibleContent from './CollectibleContent';
 
+import type { CollectiblesModalRoutes } from '../../../../routes/routesEnum';
 import type { DeviceUploadResourceParams } from '@onekeyfe/hd-core';
 import type { RouteProp } from '@react-navigation/core';
 
@@ -259,27 +259,51 @@ const NFTDetailModal: FC = () => {
     }
   }, [asset, device, intl, serviceHardware, network]);
 
+  const sendNFTWithAmount = useCallback(
+    (amount: string) => {
+      const { accountId, networkId } = getActiveWalletAccount();
+      navigation.navigate(RootRoutes.Modal, {
+        screen: ModalRoutes.Send,
+        params: {
+          screen: SendModalRoutes.PreSendAddress,
+          params: {
+            accountId,
+            networkId,
+            isNFT: true,
+            from: '',
+            to: '',
+            amount,
+            token: asset.contractAddress ?? asset.tokenAddress,
+            tokenId: asset.tokenId ?? asset.tokenAddress,
+            type: asset.ercType,
+            closeModal: modalClose,
+          },
+        },
+      });
+    },
+    [
+      asset.contractAddress,
+      asset.ercType,
+      asset.tokenAddress,
+      asset.tokenId,
+      modalClose,
+      navigation,
+    ],
+  );
+
   const goToCollectionDetail = useCollectionDetail();
   const sendAction = () => {
-    const { accountId, networkId } = getActiveWalletAccount();
-    navigation.navigate(RootRoutes.Modal, {
-      screen: ModalRoutes.Send,
-      params: {
-        screen: SendRoutes.PreSendAddress,
-        params: {
-          accountId,
-          networkId,
-          isNFT: true,
-          from: '',
-          to: '',
-          amount: outerAsset.amount ?? '1',
-          token: asset.contractAddress ?? asset.tokenAddress,
-          tokenId: asset.tokenId ?? asset.tokenAddress,
-          type: asset.ercType,
-          closeModal: modalClose,
+    if (outerAsset.amount && new BigNumber(outerAsset.amount).gt(1)) {
+      showAmountInputDialog({
+        total: outerAsset.amount,
+        onConfirm: (amount) => {
+          console.log('amount = ', amount);
+          sendNFTWithAmount(amount);
         },
-      },
-    });
+      });
+      return;
+    }
+    sendNFTWithAmount('1');
   };
 
   const AmountTag = useMemo(() => {

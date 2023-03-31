@@ -7,7 +7,6 @@ import {
   getWalletIdFromAccountId,
   isAccountCompatibleWithNetwork,
 } from '../managers/account';
-import { parseNetworkId } from '../managers/network';
 import { AccountType } from '../types/account';
 
 import type { Engine } from '../index';
@@ -111,6 +110,10 @@ export class VaultContext extends VaultContextBase {
 
   async getRpcUrl() {
     return (await this.getNetwork({ cached: false })).rpcURL;
+  }
+
+  async getScanUrl() {
+    return (await this.getNetwork({ cached: false })).scanURL ?? '';
   }
 
   async destroy() {

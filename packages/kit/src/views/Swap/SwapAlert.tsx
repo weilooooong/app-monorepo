@@ -23,8 +23,8 @@ import {
 } from '../../hooks';
 import { showOverlay } from '../../utils/overlayUtils';
 
-import { useInputLimitsError } from './hooks/useSwap';
-import { usePriceImpact } from './hooks/useSwapUtils';
+import { useInputLimitsError, useSwapRecipient } from './hooks/useSwap';
+import { usePriceImpact, useSwapSlippage } from './hooks/useSwapUtils';
 import { SwapError } from './typings';
 
 const RecipientBox = () => {
@@ -77,7 +77,7 @@ const RecipientBox = () => {
 };
 
 const RecipientAlert = () => {
-  const recipient = useAppSelector((s) => s.swap.recipient);
+  const recipient = useSwapRecipient();
 
   if (recipient) {
     return null;
@@ -159,7 +159,7 @@ const ExchangeAddressAlertContent = () => {
 
 const ExchangeAddressAlert = () => {
   const [recipientUnknown, setRecipientUnknown] = useState<boolean>(false);
-  const recipient = useAppSelector((s) => s.swap.recipient);
+  const recipient = useSwapRecipient();
   useEffect(() => {
     backgroundApiProxy.serviceSwap
       .recipientIsUnknown(recipient)
@@ -228,6 +228,44 @@ const PriceImpactAlert = () => {
   return null;
 };
 
+type SlippageAlertContentProps = {
+  value: string;
+};
+
+const SlippageAlertContent: FC<SlippageAlertContentProps> = ({ value }) => {
+  const intl = useIntl();
+  return (
+    <Box flexDirection="row" mt="6" w="full">
+      <Alert
+        containerProps={{ width: 'full' }}
+        alertType="warn"
+        dismiss={false}
+        title={intl.formatMessage(
+          {
+            id: 'msg__current_slippage_str_is_high',
+          },
+          { '0': `${value}%` },
+        )}
+        description={intl.formatMessage({
+          id: 'msg__your_trade_may_be_front_run_due_to_the_larger_slippage',
+        })}
+      />
+    </Box>
+  );
+};
+
+const SlippageAlert = () => {
+  const quote = useAppSelector((s) => s.swap.quote);
+  const slippage = useSwapSlippage();
+  if (quote && slippage.mode === 'custom') {
+    const num = Number(slippage.value);
+    if (!Number.isNaN(num) && num >= 5 && num < 50) {
+      return <SlippageAlertContent value={slippage.value} />;
+    }
+  }
+  return null;
+};
+
 const SwapWarning: FC = () => (
   <>
     <ExchangeAddressAlert />
@@ -235,6 +273,7 @@ const SwapWarning: FC = () => (
     <RecipientAlert />
     <ErrorAlert />
     <PriceImpactAlert />
+    <SlippageAlert />
   </>
 );
 

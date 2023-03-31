@@ -28,7 +28,7 @@ import { BulkSenderTypeEnum } from '../../BulkSender/types';
 import { GoPlusSecurityItems } from '../../ManageTokens/components/GoPlusAlertItems';
 import NFTListImage from '../../Wallet/NFT/NFTList/NFTListImage';
 import { BaseSendModal } from '../components/BaseSendModal';
-import { SendRoutes } from '../types';
+import { SendModalRoutes } from '../types';
 
 import type { ModalScreenProps } from '../../../routes/types';
 import type { SendRoutesParams } from '../types';
@@ -36,7 +36,7 @@ import type { RouteProp } from '@react-navigation/core';
 
 type NavigationProps = ModalScreenProps<SendRoutesParams>;
 
-type RouteProps = RouteProp<SendRoutesParams, SendRoutes.PreSendAddress>;
+type RouteProps = RouteProp<SendRoutesParams, SendModalRoutes.PreSendAddress>;
 
 type FormValues = {
   to: string;
@@ -78,6 +78,7 @@ function PreSendAddress() {
     (keyof GoPlusAddressSecurity)[]
   >([]);
   const [isLoadingAssets, setIsLoadingAssets] = useState(false);
+  const [isValidatingAddress, setIsValidatingAddress] = useState(false);
   const [displayDestinationTag, setDisplayDestinationTag] = useState(false);
   const { serviceNFT, serviceBatchTransfer, engine } = backgroundApiProxy;
   const routeParams = useMemo(() => ({ ...route.params }), [route.params]);
@@ -148,6 +149,7 @@ function PreSendAddress() {
     !isValid ||
     formState.isValidating ||
     disableSubmitBtn ||
+    isValidatingAddress ||
     validateMessage.errorMessage.length > 0;
 
   const fetchSecurityInfo = useCallback(async () => {
@@ -268,14 +270,14 @@ function PreSendAddress() {
         navigation.navigate(RootRoutes.Modal, {
           screen: ModalRoutes.Send,
           params: {
-            screen: SendRoutes.BatchSendConfirm,
+            screen: SendModalRoutes.BatchSendConfirm,
             params: {
               networkId,
               accountId,
               feeInfoUseFeeInTx: false,
               feeInfoEditable: true,
               encodedTxs: [...encodedApproveTxs, encodedTx],
-              backRouteName: SendRoutes.PreSendAddress,
+              backRouteName: SendModalRoutes.PreSendAddress,
               payloadInfo: {
                 type: 'Transfer',
                 nftInfos,
@@ -295,7 +297,7 @@ function PreSendAddress() {
         navigation.navigate(RootRoutes.Modal, {
           screen: ModalRoutes.Send,
           params: {
-            screen: SendRoutes.SendConfirm,
+            screen: SendModalRoutes.SendConfirm,
             params: {
               ...transferInfo,
               networkId,
@@ -303,7 +305,7 @@ function PreSendAddress() {
               encodedTx,
               feeInfoUseFeeInTx: false,
               feeInfoEditable: true,
-              backRouteName: SendRoutes.PreSendAddress,
+              backRouteName: SendModalRoutes.PreSendAddress,
               payloadInfo: {
                 type: 'Transfer',
                 nftInfo: {
@@ -335,7 +337,7 @@ function PreSendAddress() {
         navigation.navigate(RootRoutes.Modal, {
           screen: ModalRoutes.Send,
           params: {
-            screen: SendRoutes.PreSendAmount,
+            screen: SendModalRoutes.PreSendAmount,
             params: {
               ...transferInfo,
               networkId,
@@ -420,6 +422,7 @@ function PreSendAddress() {
           // });
         }
         try {
+          setIsValidatingAddress(true);
           await backgroundApiProxy.validator.validateAddress(
             networkId,
             toAddress,
@@ -430,6 +433,7 @@ function PreSendAddress() {
             accountId,
           });
         } catch (error0: any) {
+          setIsValidatingAddress(false);
           if (isValidNameServiceName && !resolvedAddress) return undefined;
           const { key, info } = error0;
           if (key) {
@@ -464,14 +468,29 @@ function PreSendAddress() {
             errorMessage: '',
           });
         } else {
-          setvalidateMessage({
-            warningMessage: '',
-            successMessage: intl.formatMessage({
-              id: 'form__enter_recipient_address_valid',
-            }),
-            errorMessage: '',
-          });
+          const addressbookItem =
+            await backgroundApiProxy.serviceAddressbook.getItem({
+              address: toAddress,
+            });
+          if (addressbookItem) {
+            setvalidateMessage({
+              warningMessage: '',
+              successMessage: `${intl.formatMessage({
+                id: 'title__address_book',
+              })}:${addressbookItem.name}`,
+              errorMessage: '',
+            });
+          } else {
+            setvalidateMessage({
+              warningMessage: '',
+              successMessage: intl.formatMessage({
+                id: 'form__enter_recipient_address_valid',
+              }),
+              errorMessage: '',
+            });
+          }
         }
+        setIsValidatingAddress(false);
         return true;
       }, 100);
     },

@@ -20,11 +20,16 @@ import {
 } from '@onekeyhq/kit/src/store/reducers/status';
 import type { OpenUrlRouteInfo } from '@onekeyhq/kit/src/utils/extUtils';
 import extUtils from '@onekeyhq/kit/src/utils/extUtils';
-import { getTimeDurationMs, wait } from '@onekeyhq/kit/src/utils/helper';
+import {
+  getTimeDurationMs,
+  getTimeStamp,
+  wait,
+} from '@onekeyhq/kit/src/utils/helper';
 import {
   getPassword,
   hasHardwareSupported,
 } from '@onekeyhq/kit/src/utils/localAuthentication';
+import appUpdates from '@onekeyhq/kit/src/utils/updates/AppUpdates';
 import {
   backgroundClass,
   backgroundMethod,
@@ -33,6 +38,7 @@ import {
   MAX_LOG_LENGTH,
   waitForDataLoaded,
 } from '@onekeyhq/shared/src/background/backgroundUtils';
+import { logoutFromGoogleDrive } from '@onekeyhq/shared/src/cloudfs';
 import {
   AppEventBusNames,
   appEventBus,
@@ -202,6 +208,7 @@ class ServiceApp extends ServiceBase {
     dispatch({ type: 'LOGOUT', payload: undefined });
     serviceNetwork.notifyChainChanged();
     serviceAccount.notifyAccountsChanged();
+    await logoutFromGoogleDrive(true);
 
     // await engine.resetApp() is NOT reliable of DB clean, so we need delay here.
     await wait(1500);
@@ -236,7 +243,7 @@ class ServiceApp extends ServiceBase {
         // setTimeout to avoid RESET trigger install
         setTimeout(() => {
           extUtils.openExpandTab({
-            routes: [RootRoutes.Root],
+            routes: [RootRoutes.Main],
             params: {},
           });
         }, 1000);
@@ -277,6 +284,7 @@ class ServiceApp extends ServiceBase {
       serviceSetting,
       serviceSwap,
       serviceDiscover,
+      serviceCloudBackup,
     } = this.backgroundApi;
 
     const enableTestFiatEndpoint =
@@ -302,7 +310,7 @@ class ServiceApp extends ServiceBase {
     const activeNetworkId = serviceNetwork.initCheckingNetwork(networks);
     const activeWalletId = serviceAccount.initCheckingWallet(wallets);
     serviceSwap.initSwap();
-
+    serviceCloudBackup.loginIfNeeded(false);
     const accounts = await serviceAccount.reloadAccountsByWalletIdNetworkId(
       activeWalletId,
       activeNetworkId,
@@ -412,6 +420,21 @@ class ServiceApp extends ServiceBase {
     const { dispatch } = this.backgroundApi;
     dispatch(setHandOperatedLock(false), unlock(), release());
     appEventBus.emit(AppEventBusNames.Unlocked);
+  }
+
+  @backgroundMethod()
+  checkUpdateStatus() {
+    const { store } = this.backgroundApi;
+    const { lastCheckTimestamp } = store.getState().autoUpdate;
+
+    let checkTimeDelay = getTimeDurationMs({ hour: 1 });
+    if (platformEnv.isExtension) {
+      checkTimeDelay = getTimeDurationMs({ hour: 3 });
+    }
+
+    if (getTimeStamp() - (lastCheckTimestamp ?? 0) > checkTimeDelay) {
+      return appUpdates.checkUpdate().then();
+    }
   }
 }
 

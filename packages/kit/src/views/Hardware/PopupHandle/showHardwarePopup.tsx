@@ -33,6 +33,7 @@ export const CUSTOM_UI_RESPONSE = {
   // monorepo custom
   CUSTOM_CANCEL: 'ui-custom_cancel',
   CUSTOM_NEED_ONEKEY_BRIDGE: 'ui-custom_need_onekey_bridge',
+  CUSTOM_FORCE_UPGRADE_FIRMWARE: 'ui-custom_force_onekey_bridge',
   CUSTOM_NEED_UPGRADE_FIRMWARE: 'ui-custom_need_upgrade_firmware',
   CUSTOM_NEED_OPEN_PASSPHRASE: 'ui-custom_need_open_passphrase',
   CUSTOM_NEED_CLOSE_PASSPHRASE: 'ui-custom_need_close_passphrase',
@@ -163,6 +164,7 @@ export default async function showHardwarePopup({
 
     popupView = (
       <RequestPassphraseOnDeviceView
+        connectId={payload?.deviceConnectId ?? ''}
         deviceType={deviceType}
         passphraseState={payload?.passphraseState}
         onCancel={() => {
@@ -190,6 +192,7 @@ export default async function showHardwarePopup({
     popupType = 'inputPassphrase';
     popupView = (
       <EnterPassphraseView
+        connectId={payload?.deviceConnectId ?? ''}
         passphraseState={payload?.passphraseState}
         onConfirm={(passphrase) => onPassphraseAck(passphrase)}
         onDeviceInput={() => onPassphraseAck('', true)}
@@ -204,7 +207,7 @@ export default async function showHardwarePopup({
     DialogManager.show({
       render: (
         <HandlerFirmwareUpgradeView
-          deviceId={payload?.deviceId ?? ''}
+          connectId={payload?.deviceConnectId ?? ''}
           content={content ?? ''}
           onClose={() => {
             closeHardwarePopup();
@@ -246,6 +249,21 @@ export default async function showHardwarePopup({
   if (uiRequest === CUSTOM_UI_RESPONSE.CUSTOM_NEED_ONEKEY_BRIDGE) {
     DialogManager.show({
       render: <NeedBridgeDialog />,
+    });
+    return;
+  }
+
+  if (uiRequest === CUSTOM_UI_RESPONSE.CUSTOM_FORCE_UPGRADE_FIRMWARE) {
+    DialogManager.show({
+      render: (
+        <HandlerFirmwareUpgradeView
+          connectId={payload?.deviceConnectId ?? ''}
+          content={content ?? ''}
+          onClose={() => {
+            closeHardwarePopup();
+          }}
+        />
+      ),
     });
     return;
   }

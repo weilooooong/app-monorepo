@@ -86,6 +86,10 @@ const NativeWebView = forwardRef(
     return (
       <WebView
         style={styles.container}
+        originWhitelist={['*']}
+        allowFileAccess
+        allowFileAccessFromFileURLs
+        allowUniversalAccessFromFileURLs
         allowsBackForwardNavigationGestures
         fraudulentWebsiteWarningEnabled={false}
         onLoadProgress={onLoadProgress}

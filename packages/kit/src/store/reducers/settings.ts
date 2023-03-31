@@ -1,6 +1,6 @@
 import { createSlice } from '@reduxjs/toolkit';
 import { dequal as deepEqual } from 'dequal';
-import { debounce } from 'lodash';
+import { debounce, uniq } from 'lodash';
 import uuid from 'react-native-uuid';
 
 import type { LocaleSymbol } from '@onekeyhq/components/src/locale';
@@ -15,6 +15,7 @@ import { ValidationFields } from '../../components/Protected/types';
 import type {
   BLEFirmwareInfo,
   SYSFirmwareInfo,
+  VersionInfo,
 } from '../../utils/updates/type';
 import type { PayloadAction } from '@reduxjs/toolkit';
 import type { ImageSourcePropType } from 'react-native';
@@ -32,7 +33,20 @@ export type FirmwareUpdate = {
   firmware?: SYSFirmwareInfo;
   ble?: BLEFirmwareInfo;
 };
-
+export type ISettingsDevModeInfo = {
+  enable?: boolean;
+  preReleaseUpdate?: boolean;
+  updateDeviceBle?: boolean;
+  updateDeviceSys?: boolean;
+  updateDeviceRes?: boolean;
+  enableTestFiatEndpoint?: boolean;
+  enableZeroNotificationThreshold?: boolean;
+  enablePerfCheck?: boolean;
+  defiBuildService?: string;
+  hideDiscoverContent?: boolean;
+  onRamperTestMode?: boolean;
+  showWebEmbedWebviewAgent?: boolean;
+};
 export type SettingsState = {
   theme: ThemeVariant | 'system';
   lastLocale: LocaleSymbol;
@@ -60,20 +74,7 @@ export type SettingsState = {
     string, // networkId + walletName
     WalletSwitchItem
   >;
-  devMode?: {
-    enable?: boolean;
-    preReleaseUpdate?: boolean;
-    updateDeviceBle?: boolean;
-    updateDeviceSys?: boolean;
-    updateDeviceRes?: boolean;
-    enableTestFiatEndpoint?: boolean;
-    enableZeroNotificationThreshold?: boolean;
-    enablePerfCheck?: boolean;
-    defiBuildService?: string;
-    hideDiscoverContent?: boolean;
-    enableExternalAccountAnnualReport?: boolean;
-    onRamperTestMode?: boolean;
-  };
+  devMode?: ISettingsDevModeInfo;
   pushNotification?: {
     registrationId?: string;
     threshold: number;
@@ -103,7 +104,15 @@ export type SettingsState = {
   customNetworkRpcMap?: {
     [networkId: string]: string[];
   };
-  annualReportEntryEnabled?: boolean;
+  accountDerivationDbMigrationVersion?: string;
+  hardware?: {
+    rememberPassphraseWallets?: string[];
+    verification?: Record<string, boolean>; // connectId -> verified
+    versions?: Record<string, string>; // connectId -> version
+  };
+  softwareUpdate?: {
+    forceUpdateVersionInfo?: VersionInfo;
+  };
 };
 
 export const defaultPushNotification = {
@@ -166,7 +175,15 @@ const initialState: SettingsState = {
   },
   disableSwapExactApproveAmount: false,
   customNetworkRpcMap: {},
-  annualReportEntryEnabled: false,
+  accountDerivationDbMigrationVersion: '',
+  hardware: {
+    rememberPassphraseWallets: [], // walletId
+    verification: {}, // connectId -> verified
+    versions: {}, // connectId -> version
+  },
+  softwareUpdate: {
+    forceUpdateVersionInfo: undefined,
+  },
 };
 
 export const THEME_PRELOAD_STORAGE_KEY = 'ONEKEY_THEME_PRELOAD';
@@ -294,19 +311,16 @@ export const settingsSlice = createSlice({
     setHideDiscoverContent(state, action: PayloadAction<boolean>) {
       state.devMode = { ...state.devMode, hideDiscoverContent: action.payload };
     },
-    setEnableExternalAccountReport(state, action: PayloadAction<boolean>) {
-      state.devMode = {
-        ...state.devMode,
-        enableExternalAccountAnnualReport: action.payload,
-      };
-    },
-    setAnnualReportEntryEnabled(state, action: PayloadAction<boolean>) {
-      state.annualReportEntryEnabled = action.payload;
-    },
     setOnRamperTestMode(state, action: PayloadAction<boolean>) {
       state.devMode = {
         ...state.devMode,
         onRamperTestMode: action.payload,
+      };
+    },
+    setShowWebEmbedWebviewAgent(state, action: PayloadAction<boolean>) {
+      state.devMode = {
+        ...state.devMode,
+        showWebEmbedWebviewAgent: action.payload,
       };
     },
     setEnableTestFiatEndpoint(state, action: PayloadAction<boolean>) {
@@ -445,9 +459,21 @@ export const settingsSlice = createSlice({
       }
       if (type === 'add') {
         map[networkId].push(rpc);
+        map[networkId] = uniq(map[networkId]);
       } else if (type === 'remove') {
         map[networkId] = map[networkId].filter((n) => n !== rpc);
       }
+      state.customNetworkRpcMap = map;
+    },
+    clearNetworkCustomRpcs(
+      state,
+      action: PayloadAction<{ networkId: string }>,
+    ) {
+      const { networkId } = action.payload;
+      const map = {
+        ...(state.customNetworkRpcMap || {}),
+      };
+      delete map[networkId];
       state.customNetworkRpcMap = map;
     },
     setEnableWebAuthn(state, action: PayloadAction<boolean>) {
@@ -479,6 +505,74 @@ export const settingsSlice = createSlice({
       const stateWalletSwitch = state.walletSwitchData || {};
       const cacheWalletSwitch = stateWalletSwitch[walletId] || {};
       cacheWalletSwitch.enable = enable;
+    },
+    setAccountDerivationDbMigrationVersion(
+      state,
+      action: PayloadAction<string>,
+    ) {
+      state.accountDerivationDbMigrationVersion = action.payload;
+    },
+    rememberPassphraseWallet(state, action: PayloadAction<string>) {
+      const { payload } = action;
+      const rememberWallets = state.hardware?.rememberPassphraseWallets || [];
+      if (!rememberWallets.includes(payload)) {
+        rememberWallets.push(payload);
+      }
+
+      state.hardware = {
+        ...state.hardware,
+        rememberPassphraseWallets: rememberWallets,
+      };
+    },
+    forgetPassphraseWallet(state, action: PayloadAction<string | string[]>) {
+      const { payload } = action;
+      const rememberWallets = state.hardware?.rememberPassphraseWallets || [];
+      const pendingDelete = Array.isArray(payload) ? payload : [payload];
+
+      pendingDelete.forEach((walletId) => {
+        const index = rememberWallets.indexOf(walletId);
+        if (index > -1) {
+          rememberWallets.splice(index, 1);
+        }
+      });
+
+      state.hardware = {
+        ...state.hardware,
+        rememberPassphraseWallets: rememberWallets,
+      };
+    },
+    setVerification: (
+      state,
+      action: PayloadAction<{ connectId: string; verified: boolean }>,
+    ) => {
+      state.hardware = {
+        ...state.hardware,
+        verification: {
+          ...state.hardware?.verification,
+          [action.payload.connectId]: action.payload.verified,
+        },
+      };
+    },
+    setDeviceVersion: (
+      state,
+      action: PayloadAction<{ connectId: string; version: string }>,
+    ) => {
+      state.hardware = {
+        ...state.hardware,
+        versions: {
+          ...state.hardware?.versions,
+          [action.payload.connectId]: action.payload.version,
+        },
+      };
+    },
+    setForceUpdateVersionInfo: (
+      state,
+      action: PayloadAction<VersionInfo | undefined>,
+    ) => {
+      state.softwareUpdate = {
+        ...state.softwareUpdate,
+        forceUpdateVersionInfo: action.payload,
+      };
     },
   },
 });
@@ -523,10 +617,16 @@ export const {
   setHideDiscoverContent,
   setWalletSwitch,
   toggleWalletSwitch,
-  setAnnualReportEntryEnabled,
-  setEnableExternalAccountReport,
   setHideScamHistory,
+  setAccountDerivationDbMigrationVersion,
   setOnRamperTestMode,
+  setShowWebEmbedWebviewAgent,
+  clearNetworkCustomRpcs,
+  rememberPassphraseWallet,
+  forgetPassphraseWallet,
+  setVerification,
+  setDeviceVersion,
+  setForceUpdateVersionInfo,
 } = settingsSlice.actions;
 
 export default settingsSlice.reducer;

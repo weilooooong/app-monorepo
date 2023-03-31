@@ -30,7 +30,7 @@ export type UIProviderProps = {
    */
   locale: LocaleSymbol;
 
-  hapticsEnabled: boolean;
+  reduxReady?: boolean;
 
   waitFontLoaded?: boolean;
 };
@@ -55,7 +55,7 @@ const Provider: FC<UIProviderProps> = ({
   children,
   themeVariant,
   locale,
-  hapticsEnabled,
+  reduxReady,
   waitFontLoaded,
 }) => {
   const { width, height } = useWindowDimensions();
@@ -64,14 +64,14 @@ const Provider: FC<UIProviderProps> = ({
     () => ({
       themeVariant,
       locale,
-      hapticsEnabled,
+      reduxReady,
       device: {
         screenWidth: width,
         screenHeight: height,
         size: getSize(width),
       },
     }),
-    [themeVariant, locale, width, height, hapticsEnabled],
+    [themeVariant, locale, reduxReady, width, height],
   );
 
   const themeVar = useMemo(

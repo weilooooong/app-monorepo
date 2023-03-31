@@ -20,15 +20,15 @@ import {
   useActiveWalletAccount,
   useAppSelector,
 } from '@onekeyhq/kit/src/hooks/redux';
-import type { CollectiblesRoutesParams } from '@onekeyhq/kit/src/routes/Modal/Collectibles';
-import { CollectiblesModalRoutes } from '@onekeyhq/kit/src/routes/Modal/Collectibles';
+import type { CollectiblesRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/Collectibles';
+import { ModalRoutes, RootRoutes } from '@onekeyhq/kit/src/routes/routesEnum';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
-import { ModalRoutes, RootRoutes } from '@onekeyhq/kit/src/routes/types';
 import { MAX_PAGE_CONTAINER_WIDTH } from '@onekeyhq/shared/src/config/appConfig';
 import platformEnv from '@onekeyhq/shared/src/platformEnv';
 
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
 import { useIsMounted } from '../../../../hooks/useIsMounted';
+import { CollectiblesModalRoutes } from '../../../../routes/routesEnum';
 import { WalletHomeTabEnum } from '../../type';
 
 import CollectionCard from './CollectionCard';
@@ -213,7 +213,6 @@ function NFTListContainer() {
   const isMountedRef = useIsMounted();
   const homeTabName = useAppSelector((s) => s.status.homeTabName);
   const isFocused = useIsFocused();
-  const [price, updatePrice] = useState<number>(0);
   const [collectibles, updateListData] = useState<Collection[]>([]);
 
   const fetchData = async () => {
@@ -279,17 +278,6 @@ function NFTListContainer() {
     }
   }, [mutate, shouldDoRefresh, account, networkId]);
 
-  useEffect(() => {
-    (async () => {
-      if (networkId) {
-        const data = await serviceNFT.fetchSymbolPrice(networkId);
-        if (isMountedRef.current && data) {
-          updatePrice(data);
-        }
-      }
-    })();
-  }, [isMountedRef, networkId, serviceNFT]);
-
   const handleSelectAsset = useCallback(
     (asset: NFTAsset) => {
       if (!network) return;
@@ -327,7 +315,7 @@ function NFTListContainer() {
   );
 
   return (
-    <NFTListContentProvider price={price}>
+    <NFTListContentProvider>
       <NFTList
         collectibles={collectibles}
         onSelectCollection={handleSelectCollectible}

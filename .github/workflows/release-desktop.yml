@@ -21,6 +21,9 @@ jobs:
         with:
           lfs: true
 
+      - name: Install Snapcraft
+        uses: samuelmeuli/action-snapcraft@v2
+
       - name: Dotenv Action
         id: dotenv
         uses: OneKeyHQ/actions/dotenv-action@main
@@ -93,11 +96,9 @@ jobs:
       - name: Inject Environment Variables
         env:
           COVALENT_KEY: ${{ secrets.COVALENT_KEY }}
-          MOONPAY_KEY: ${{ secrets.MOONPAY_KEY }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
           echo "COVALENT_KEY=${{ env.COVALENT_KEY }}" >> .env
-          echo "MOONPAY_KEY=${{ env.MOONPAY_KEY }}" >> .env
           echo "GITHUB_SHA=${{ env.GITHUB_SHA }}" >> .env
 
       - name: Setup Code Signing file
@@ -159,6 +160,13 @@ jobs:
             !./packages/desktop/build-electron/mac
             !./packages/desktop/build-electron/linux-unpacked
             !./packages/desktop/build-electron/builder-debug.yml
+
+      - name: Upload Artifacts to Snap Linux
+        if: ${{ github.event.workflow_run }}
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
+        run: |
+          snapcraft push ./packages/desktop/build-electron/*.snap --release edge
 
       - name: 'Notify to Slack'
         uses: onekeyhq/actions/notice-slack-app-update@main

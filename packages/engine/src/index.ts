@@ -4,7 +4,7 @@
 
 import BigNumber from 'bignumber.js';
 import * as bip39 from 'bip39';
-import { cloneDeep, isEmpty, uniqBy } from 'lodash';
+import { cloneDeep, get, uniqBy } from 'lodash';
 import memoizee from 'memoizee';
 import natsort from 'natsort';
 import RNRestart from 'react-native-restart';
@@ -28,7 +28,6 @@ import {
 import { OnekeyNetwork } from '@onekeyhq/shared/src/config/networkIds';
 import { CoreSDKLoader } from '@onekeyhq/shared/src/device/hardwareInstance';
 import {
-  COINTYPE_BTC,
   IMPL_EVM,
   getSupportedImpls,
 } from '@onekeyhq/shared/src/engine/engineConsts';
@@ -65,9 +64,15 @@ import {
 import {
   derivationPathTemplates,
   getDefaultPurpose,
+  getNextAccountId,
 } from './managers/derivation';
 import { fetchSecurityInfo, getRiskLevel } from './managers/goplus';
-import { implToCoinTypes } from './managers/impl';
+import {
+  getAccountNameInfoByTemplate,
+  getDBAccountTemplate,
+  getDefaultAccountNameInfoByImpl,
+  migrateNextAccountIds,
+} from './managers/impl';
 import {
   fromDBNetworkToNetwork,
   getEVMNetworkToCreate,
@@ -97,10 +102,8 @@ import {
   WALLET_TYPE_WATCHING,
 } from './types/wallet';
 import { Validators } from './validators';
-import {
-  createVaultHelperInstance,
-  createVaultSettings,
-} from './vaults/factory';
+import { createVaultHelperInstance } from './vaults/factory';
+import { createVaultSettings } from './vaults/factory.createVaultSettings';
 import { getMergedTxs } from './vaults/impl/evm/decoder/history';
 import { IDecodedTxActionType } from './vaults/types';
 import { VaultFactory } from './vaults/VaultFactory';
@@ -109,6 +112,7 @@ import type { DBAPI, ExportedSeedCredential } from './dbs/base';
 import type { ChartQueryParams } from './priceController';
 import type {
   Account,
+  AccountCredentialType,
   DBAccount,
   DBUTXOAccount,
   ImportableHDAccount,
@@ -678,52 +682,6 @@ class Engine {
   }
 
   @backgroundMethod()
-  async getWalletAccountsGroupedByNetwork(
-    walletId: string,
-  ): Promise<Array<{ networkId: string; accounts: Array<Account> }>> {
-    const wallet = await this.getWallet(walletId);
-    const accounts = await this.getAccounts(wallet.accounts);
-    const networks = await this.listNetworks();
-
-    const networkToAccounts: Record<string, Array<Account>> = {};
-    const coinTypeToNetworks: Record<string, Array<string>> = {};
-    for (const network of networks) {
-      networkToAccounts[network.id] = [];
-      const coinType = implToCoinTypes[network.impl];
-      if (!coinType) {
-        throw new OneKeyInternalError(
-          `coinType of impl=${network.impl} not found.`,
-        );
-      }
-      if (coinType in coinTypeToNetworks) {
-        coinTypeToNetworks[coinType].push(network.id);
-      } else {
-        coinTypeToNetworks[coinType] = [network.id];
-      }
-    }
-
-    for (const account of accounts) {
-      for (const networkId of coinTypeToNetworks[account.coinType] || []) {
-        if (account.type !== AccountType.VARIANT) {
-          networkToAccounts[networkId].push(account);
-        } else {
-          const vault = await this.getVault({
-            networkId,
-            accountId: account.id,
-          });
-          const outputAccount = await vault.getOutputAccount();
-          if (!isEmpty(outputAccount.address))
-            networkToAccounts[networkId].push(outputAccount);
-        }
-      }
-    }
-    return networks.map(({ id: networkId }) => ({
-      networkId,
-      accounts: networkToAccounts[networkId],
-    }));
-  }
-
-  @backgroundMethod()
   async getAccounts(
     accountIds: Array<string>,
     networkId?: string,
@@ -742,7 +700,11 @@ class Engine {
       }, 3000);
     };
 
-    const accounts = await this.dbApi.getAccounts(accountIds);
+    let accounts = await this.dbApi.getAccounts(accountIds);
+    if (networkId) {
+      const vault = await this.getChainOnlyVault(networkId);
+      accounts = await vault.filterAccounts({ accounts, networkId });
+    }
     const outputAccounts = await Promise.all(
       accounts
         .filter(
@@ -770,14 +732,14 @@ class Engine {
                       .then((address) => {
                         if (!address) {
                           setTimeout(() => {
-                            this.removeAccount(a.id, '', true);
+                            this.removeAccount(a.id, '', networkId, true);
                             checkActiveWallet();
                           }, 100);
                         }
                       })
                       .catch(() => {
                         setTimeout(() => {
-                          this.removeAccount(a.id, '', true);
+                          this.removeAccount(a.id, '', networkId, true);
                           checkActiveWallet();
                         }, 100);
                       });
@@ -797,6 +759,77 @@ class Engine {
     // Token ids are included.
     const vault = await this.getVault({ accountId, networkId });
     return vault.getOutputAccount();
+  }
+
+  @backgroundMethod()
+  async getAccountsByVault({
+    walletId,
+    networkId,
+    password,
+    indexes,
+    purpose,
+    template,
+  }: {
+    walletId: string;
+    networkId: string;
+    password: string;
+    indexes: number[];
+    purpose?: number;
+    template?: string;
+  }): Promise<ImportableHDAccount[]> {
+    if (!walletId || !networkId) return [];
+    const vault = await this.getWalletOnlyVault(networkId, walletId);
+    const { impl } = await this.getNetwork(networkId);
+    const accountNameInfo = template
+      ? getAccountNameInfoByTemplate(impl, template)
+      : getDefaultAccountNameInfoByImpl(impl);
+    const accounts = await vault.keyring.prepareAccounts({
+      type: 'SEARCH_ACCOUNTS',
+      password,
+      indexes,
+      purpose,
+      coinType: accountNameInfo.coinType,
+      template: accountNameInfo.template,
+      skipCheckAccountExist: true,
+    });
+    const addresses = await Promise.all(
+      accounts.map(async (a) => {
+        if (a.type === AccountType.UTXO) {
+          return (a as DBUTXOAccount).address;
+        }
+        if (a.type === AccountType.VARIANT) {
+          return vault.addressFromBase(a);
+        }
+        return vault.getDisplayAddress(a.address);
+      }),
+    );
+    const balancesAddress = await Promise.all(
+      accounts.map(async (a) => {
+        if (a.type === AccountType.UTXO) {
+          const address = await vault.getFetchBalanceAddress(a);
+          return { address };
+        }
+        if (a.type === AccountType.VARIANT) {
+          const address = await vault.addressFromBase(a);
+          return { address };
+        }
+        return { address: a.address };
+      }),
+    );
+    return accounts.map((account, index) => ({
+      index: indexes[index],
+      path: account.path,
+      defaultName: account.name,
+      displayAddress: addresses[index],
+      balancesAddress: balancesAddress[index].address,
+      mainBalance: '0',
+    }));
+  }
+
+  @backgroundMethod()
+  async getDisplayAddress(networkId: string, address: string) {
+    const vault = await this.getChainOnlyVault(networkId);
+    return vault.getDisplayAddress(address);
   }
 
   @backgroundMethod()
@@ -830,15 +863,21 @@ class Engine {
   }
 
   @backgroundMethod()
-  async getAccountPrivateKey(
-    accountId: string,
-    password: string,
-    // networkId?: string, TODO: different curves on different networks.
-  ): Promise<string> {
+  async getAccountPrivateKey({
+    accountId,
+    password,
+    credentialType,
+  }: {
+    accountId: string;
+    password: string;
+    credentialType: AccountCredentialType;
+  }): // networkId?: string, TODO: different curves on different networks.
+  Promise<string> {
     const { coinType } = await this.dbApi.getAccount(accountId);
     // TODO: need a method to get default network from coinType.
     const networkId = {
       '60': OnekeyNetwork.eth,
+      '61': OnekeyNetwork.etc,
       '503': OnekeyNetwork.cfx,
       '397': OnekeyNetwork.near,
       '0': OnekeyNetwork.btc,
@@ -857,13 +896,14 @@ class Engine {
       '461': OnekeyNetwork.fil,
       '784': OnekeyNetwork.sui,
       '354': OnekeyNetwork.dot,
+      '128': OnekeyNetwork.xmr,
     }[coinType];
     if (typeof networkId === 'undefined') {
       throw new NotImplemented('Unsupported network.');
     }
 
     const vault = await this.getVault({ accountId, networkId });
-    return vault.getExportedCredential(password);
+    return vault.getExportedCredential(password, credentialType);
   }
 
   @backgroundMethod()
@@ -906,6 +946,7 @@ class Engine {
     start = 0,
     limit = 10,
     purpose?: number,
+    template?: string,
   ): Promise<Array<ImportableHDAccount>> {
     // Search importable HD accounts.
     const wallet = await this.dbApi.getWallet(walletId);
@@ -917,12 +958,18 @@ class Engine {
       .map((index) => start + index)
       .filter((i) => i < 2 ** 31);
 
+    const { impl } = await this.getNetwork(networkId);
+    const accountNameInfo = template
+      ? getAccountNameInfoByTemplate(impl, template)
+      : getDefaultAccountNameInfoByImpl(impl);
     const vault = await this.getWalletOnlyVault(networkId, walletId);
     const accounts = await vault.keyring.prepareAccounts({
       type: 'SEARCH_ACCOUNTS',
       password,
       indexes,
       purpose,
+      coinType: accountNameInfo.coinType,
+      template: accountNameInfo.template,
     });
 
     const addresses = await Promise.all(
@@ -973,6 +1020,8 @@ class Engine {
     skipRepeat,
     callback,
     isAddInitFirstAccountOnly,
+    template,
+    skipCheckAccountExist,
   }: {
     password: string;
     walletId: string;
@@ -983,6 +1032,8 @@ class Engine {
     skipRepeat?: boolean;
     callback?: (_account: Account) => Promise<boolean>;
     isAddInitFirstAccountOnly?: boolean;
+    template?: string;
+    skipCheckAccountExist?: boolean;
   }): Promise<Array<Account>> {
     // eslint-disable-next-line no-param-reassign
     callback =
@@ -1008,12 +1059,18 @@ class Engine {
 
     const { impl } = dbNetwork;
     const usedPurpose = purpose || getDefaultPurpose(impl);
-    const coinType = implToCoinTypes[impl];
+    const accountNameInfo =
+      template && template.length
+        ? getAccountNameInfoByTemplate(impl, template)
+        : getDefaultAccountNameInfoByImpl(impl);
+    const { coinType } = accountNameInfo;
     if (!coinType) {
       throw new OneKeyInternalError(`coinType of impl=${impl} not found.`);
     }
-    const nextIndex =
-      wallet.nextAccountIds[`${usedPurpose}'/${coinType}'`] || 0;
+    const nextIndex = getNextAccountId(
+      wallet.nextAccountIds,
+      accountNameInfo.template,
+    );
     const usedIndexes = indexes || [nextIndex];
     if (isAddInitFirstAccountOnly && nextIndex > 0) {
       throw new OneKeyInternalError(
@@ -1033,12 +1090,21 @@ class Engine {
       indexes: usedIndexes,
       purpose: usedPurpose,
       names,
+      coinType,
+      template: accountNameInfo.template,
+      skipCheckAccountExist,
     });
 
     const ret: Array<Account> = [];
     for (const dbAccount of accounts) {
       try {
-        const { id } = await this.dbApi.addAccountToWallet(walletId, dbAccount);
+        const finalDbAccount = dbAccount.template
+          ? dbAccount
+          : { ...dbAccount, template: accountNameInfo.template };
+        const { id } = await this.dbApi.addAccountToWallet(
+          walletId,
+          finalDbAccount,
+        );
 
         const account = await this.getAccount(id, networkId);
         ret.push(account);
@@ -1062,12 +1128,13 @@ class Engine {
     networkId: string,
     credential: string,
     name?: string,
+    template?: string,
   ): Promise<Account> {
     await this.validator.validatePasswordStrength(password);
     const vault = await this.getWalletOnlyVault(networkId, 'imported');
     let privateKey: Buffer | undefined;
     try {
-      privateKey = vault.getPrivateKeyByCredential(credential);
+      privateKey = await vault.getPrivateKeyByCredential(credential);
     } catch (e) {
       console.error(e);
     }
@@ -1079,6 +1146,7 @@ class Engine {
     const [dbAccount] = await vault.keyring.prepareAccounts({
       privateKey,
       name: name || '',
+      template,
     });
 
     await this.dbApi.addAccountToWallet('imported', dbAccount, {
@@ -1097,12 +1165,14 @@ class Engine {
     name,
     walletType,
     checkExists,
+    template,
   }: {
     networkId: string;
     address: string; // address
     name: string;
     walletType: typeof WALLET_TYPE_WATCHING | typeof WALLET_TYPE_EXTERNAL;
     checkExists?: boolean;
+    template?: string;
   }): Promise<Account> {
     // throw new Error('sample test error');
     // Add an watching account. Raise an error if account already exists.
@@ -1116,6 +1186,7 @@ class Engine {
       target: address,
       name,
       accountIdPrefix: walletType,
+      template,
     });
 
     if (checkExists) {
@@ -1134,6 +1205,7 @@ class Engine {
   async removeAccount(
     accountId: string,
     password: string,
+    networkId: string,
     skipPasswordCheck?: boolean,
   ): Promise<void> {
     // Remove an account. Raise an error if account doesn't exist or password is wrong.
@@ -1144,15 +1216,15 @@ class Engine {
     ]);
     let rollbackNextAccountIds: Record<string, number> = {};
 
-    if (dbAccount.coinType === COINTYPE_BTC && dbAccount.path.length > 0) {
+    if (dbAccount.type === AccountType.UTXO && dbAccount.path.length > 0) {
       const components = dbAccount.path.split('/');
-      const nextAccountCategory = `${components[1]}/${components[2]}`;
       const index = parseInt(components[3].slice(0, -1)); // remove the "'" suffix
-      if (wallet.nextAccountIds[nextAccountCategory] === index + 1) {
+      const template = dbAccount.template ?? '';
+      if (getNextAccountId(wallet.nextAccountIds, template) === index + 1) {
         // Removing the last account, may need to roll back next account id.
-        rollbackNextAccountIds = { [nextAccountCategory]: index };
+        rollbackNextAccountIds = { [template]: index };
         try {
-          const vault = await this.getChainOnlyVault('btc--0');
+          const vault = await this.getChainOnlyVault(networkId);
           const accountUsed = await vault.checkAccountExistence(
             (dbAccount as DBUTXOAccount).xpub,
           );
@@ -1812,7 +1884,24 @@ class Engine {
     // throw new Error('test fetch fee info error');
     // TODO move to vault.fetchFeeInfo and _fetchFeeInfo
     // clone encodedTx to avoid side effects
-    return vault.fetchFeeInfo(cloneDeep(encodedTx), signOnly);
+    try {
+      return await vault.fetchFeeInfo(cloneDeep(encodedTx), signOnly);
+    } catch (error: any) {
+      // AxiosError error
+      const axiosError = get(error, 'code', undefined) === 429;
+      // JsonRpcError error
+      const jsonRpcError =
+        get(error, 'response.status', undefined) === 429 ||
+        get(error, 'message', undefined) === 'Wrong response<429>';
+
+      if (axiosError || jsonRpcError) {
+        throw new OneKeyInternalError(
+          'Wrong response<429>',
+          'msg__network_request_too_many',
+        );
+      }
+      throw error;
+    }
   }
 
   @backgroundMethod()
@@ -1836,6 +1925,62 @@ class Engine {
       spender,
       amount,
       from: address,
+    });
+  }
+
+  @backgroundMethod()
+  async buildEncodedTxFromWrapperTokenDeposit({
+    networkId,
+    accountId,
+    contract,
+    amount,
+  }: {
+    networkId: string;
+    accountId: string;
+    contract: string;
+    amount: string;
+  }) {
+    const vault = await this.getVault({ networkId, accountId });
+    const impl = await vault.getNetworkImpl();
+    if (impl !== IMPL_EVM) {
+      throw new OneKeyInternalError(
+        `networkId: ${networkId} dont support deposit`,
+      );
+    }
+    const { address } = await this.getAccount(accountId, networkId);
+    const evmVault = vault as VaultEvm;
+    return evmVault.buildEncodedTxFromWrapperTokenDeposit({
+      amount,
+      from: address,
+      contract,
+    });
+  }
+
+  @backgroundMethod()
+  async buildEncodedTxFromWrapperTokenWithdraw({
+    networkId,
+    accountId,
+    contract,
+    amount,
+  }: {
+    networkId: string;
+    accountId: string;
+    contract: string;
+    amount: string;
+  }) {
+    const vault = await this.getVault({ networkId, accountId });
+    const impl = await vault.getNetworkImpl();
+    if (impl !== IMPL_EVM) {
+      throw new OneKeyInternalError(
+        `networkId: ${networkId} dont support withdraw`,
+      );
+    }
+    const { address } = await this.getAccount(accountId, networkId);
+    const evmVault = vault as VaultEvm;
+    return evmVault.buildEncodedTxFromWrapperTokenWithdraw({
+      amount,
+      from: address,
+      contract,
     });
   }
 
@@ -2177,15 +2322,24 @@ class Engine {
 
   @backgroundMethod()
   async listNetworks(enabledOnly = true): Promise<Array<Network>> {
-    const networks = await this.dbApi.listNetworks();
-    return Promise.all(
-      networks
+    const dbNetworks = await this.dbApi.listNetworks();
+    const devModeEnable = appSelector((s) => s.settings.devMode?.enable);
+    const networks = await Promise.all(
+      dbNetworks
         .filter(
           (dbNetwork) =>
             (enabledOnly ? dbNetwork.enabled : true) &&
             getSupportedImpls().has(dbNetwork.impl),
         )
         .map(async (dbNetwork) => this.dbNetworkToNetwork(dbNetwork)),
+    );
+
+    return networks.filter(
+      (network) =>
+        (platformEnv.isExtension
+          ? !network.settings.disabledInExtension
+          : true) &&
+        (devModeEnable ? true : !network.settings.enabledInDevModeOnly),
     );
   }
 
@@ -2717,6 +2871,8 @@ class Engine {
           );
         }
 
+        // migrate nextAccountIds for old backup
+        const newNextAccountIds = migrateNextAccountIds(nextAccountIds);
         const wallet = await this.dbApi.createHDWallet({
           password: localPassword,
           rs: {
@@ -2726,7 +2882,7 @@ class Engine {
           backuped: true,
           name,
           avatar,
-          nextAccountIds,
+          nextAccountIds: newNextAccountIds,
         });
         const reIdPrefix = new RegExp(`^${id}`);
         for (const accountToAdd of accounts) {
@@ -2737,6 +2893,9 @@ class Engine {
             );
           } else {
             accountToAdd.id = accountToAdd.id.replace(reIdPrefix, wallet.id);
+            if (!accountToAdd.template) {
+              accountToAdd.template = getDBAccountTemplate(accountToAdd);
+            }
             await this.dbApi.addAccountToWallet(wallet.id, accountToAdd);
           }
         }
@@ -2818,29 +2977,19 @@ class Engine {
   async getFrozenBalance({
     accountId,
     networkId,
+    password,
   }: {
     accountId: string;
     networkId: string;
+    password?: string;
   }) {
     if (!networkId || !accountId) return 0;
-    return this._getFrozenBalance(accountId, networkId);
+    const vault = await this.getVault({
+      accountId,
+      networkId,
+    });
+    return vault.getFrozenBalance(password);
   }
-
-  _getFrozenBalance = memoizee(
-    async (accountId: string, networkId: string) => {
-      const vault = await this.getVault({
-        accountId,
-        networkId,
-      });
-      return vault.getFrozenBalance();
-    },
-    {
-      promise: true,
-      primitive: true,
-      max: 1,
-      maxAge: 1000 * 30,
-    },
-  );
 }
 
 export { Engine };

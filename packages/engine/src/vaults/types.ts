@@ -1,10 +1,12 @@
+import type { LocaleIds } from '@onekeyhq/components/src/locale';
 import type { CurveName } from '@onekeyhq/engine/src/secret';
 import type { SignedTx, UnsignedTx } from '@onekeyhq/engine/src/types/provider';
 import type { SendConfirmActionType } from '@onekeyhq/kit/src/views/Send/types';
 import type { QuoteData } from '@onekeyhq/kit/src/views/Swap/typings';
 
 import type { Engine } from '../index';
-import type { EIP1559Fee } from '../types/network';
+import type { AccountCredential } from '../types/account';
+import type { AccountNameInfo, EIP1559Fee } from '../types/network';
 import type { NFTAsset } from '../types/nft';
 import type { Token } from '../types/token';
 import type {
@@ -35,13 +37,24 @@ import type { IEncodedTxSol, INativeTxSol } from './impl/sol/types';
 import type { IEncodedTxSTC } from './impl/stc/types';
 import type { IEncodedTxSUI } from './impl/sui/types';
 import type { IEncodedTxTron } from './impl/tron/types';
+import type { IDecodedTxExtraXmr, IEncodedTxXmr } from './impl/xmr/types';
 import type { IEncodedTxXrp } from './impl/xrp/types';
 
 // Options ----------------------------------------------
 export type IVaultSubNetworkSettings = {
   isIntegerGasPrice?: boolean;
+  minGasPrice?: string;
 };
+
+export type TxExtraInfo = {
+  key: string;
+  title: LocaleIds;
+  canCopy?: boolean;
+  isShorten?: boolean;
+};
+
 export type IVaultSettings = {
+  accountNameInfo: Record<string, AccountNameInfo>;
   feeInfoEditable: boolean;
   privateKeyExportEnabled: boolean;
   tokenEnabled: boolean;
@@ -52,6 +65,13 @@ export type IVaultSettings = {
   externalAccountEnabled: boolean;
   hardwareAccountEnabled: boolean;
 
+  addressDerivationDisabled?: boolean;
+  validationRequired?: boolean;
+  disabledInExtension?: boolean;
+  exportCredentialInfo?: AccountCredential[];
+  txExtraInfo?: TxExtraInfo[];
+  enabledInDevModeOnly?: boolean;
+
   minTransferAmount?: string;
 
   isUTXOModel: boolean;
@@ -59,6 +79,7 @@ export type IVaultSettings = {
   activateTokenRequired?: boolean;
 
   minGasLimit?: number;
+  minGasPrice?: string;
 
   cannotSendToSelf?: boolean;
 
@@ -86,6 +107,7 @@ export type IVaultSettings = {
   batchTokenTransferApprovalRequired?: boolean;
   maxActionsInTx?: number;
   transactionIdPattern?: string;
+  showUsedAddress?: boolean;
 };
 export type IVaultFactoryOptions = {
   networkId: string;
@@ -180,7 +202,8 @@ export type IEncodedTx =
   | IEncodedTxADA
   | IEncodedTxSUI
   | IEncodedTxFil
-  | IEncodedTxDot;
+  | IEncodedTxDot
+  | IEncodedTxXmr;
 
 export type INativeTx =
   | INativeTxEvm
@@ -201,6 +224,7 @@ export type SignedTxResult = {
   signature?: string; // hex string
   publicKey?: string; // hex string
   digest?: string; // hex string
+  txKey?: string; // hex string for Monero
 } & SignedTx;
 
 // EncodedTx Update ----------------------------------------------
@@ -276,22 +300,30 @@ export type IPrepareWatchingAccountsParams = {
   target: string;
   name: string;
   accountIdPrefix: typeof WALLET_TYPE_WATCHING | typeof WALLET_TYPE_EXTERNAL;
+  template?: string;
 };
 export type IPrepareImportedAccountsParams = {
   privateKey: Buffer;
   name: string;
+  template?: string;
 };
 export type IPrepareSoftwareAccountsParams = {
   password: string;
   indexes: Array<number>;
   purpose?: number;
   names?: Array<string>;
+  coinType: string;
+  template: string;
+  skipCheckAccountExist?: boolean;
 };
 export type IPrepareHardwareAccountsParams = {
   type: 'SEARCH_ACCOUNTS' | 'ADD_ACCOUNTS';
   indexes: Array<number>;
   purpose?: number;
   names?: Array<string>;
+  coinType: string;
+  template: string;
+  skipCheckAccountExist?: boolean;
 };
 export type IPrepareAccountsParams =
   | IPrepareWatchingAccountsParams
@@ -303,9 +335,23 @@ export type IPrepareAccountsParams =
 export type IHardwareGetAddressParams = {
   path: string;
   showOnOneKey: boolean;
+  /**
+   * for btc like chain, wheh isTemplatePath is true, param path is whole path
+   * e.g., isTemplatePath = false, then the path is m/44'/0'/0'
+   *       isTemplatePath = true, then the path is m/44'/0'/0'/0/0
+   */
+  isTemplatePath?: boolean;
 };
 
 export type IGetAddressParams = IHardwareGetAddressParams;
+
+// PrepareAccountByAddressIndex
+export type IPrepareAccountByAddressIndexParams = {
+  password: string;
+  template: string;
+  accountIndex: number;
+  addressIndex: number;
+};
 
 // DecodedTx ----------------------------------------------
 export type IDecodedTxLegacy = EVMDecodedItem;
@@ -351,6 +397,7 @@ export enum IDecodedTxActionType {
   NFT_TRANSFER = 'NFT_TRANSFER',
   NFT_MINT = 'NFT_MINT',
   NFT_SALE = 'NFT_SALE',
+  NFT_BURN = 'NFT_BURN',
 
   // Swap
   INTERNAL_SWAP = 'INTERNAL_SWAP',
@@ -420,13 +467,19 @@ export type IDecodedTxActionEvmInfo = {
   value: string;
   data?: string;
 };
-export type IDecodedTxActionNFTTransfer = IDecodedTxActionBase & {
+export type IDecodedTxActionNFTBase = IDecodedTxActionBase & {
   asset: NFTAsset;
   send: string;
   receive: string;
   amount: string;
+  from?: string;
+};
+
+export type IDecodedTxActionNFTTrade = IDecodedTxActionNFTBase & {
   value?: string;
-  exchangeName?: string; // Only for Sale
+  exchangeName?: string;
+  tradeSymbol?: string;
+  tradeSymbolAddress?: string | null;
 };
 
 export type IDecodedTxActionInternalSwap = IDecodedTxActionBase & ISwapInfo;
@@ -447,8 +500,11 @@ export type IDecodedTxAction = {
   // other Unknown Action
   unknownAction?: IDecodedTxActionUnknown;
   evmInfo?: IDecodedTxActionEvmInfo;
-  nftTransfer?: IDecodedTxActionNFTTransfer;
+  // nft
+  nftTransfer?: IDecodedTxActionNFTBase;
+  nftTrade?: IDecodedTxActionNFTTrade;
 };
+
 export type IDecodedTx = {
   txid: string; // blockHash
 
@@ -480,6 +536,7 @@ export type IDecodedTx = {
     | IDecodedTxExtraNear
     | IDecodedTxExtraBtc
     | IDecodedTxExtraAlgo
+    | IDecodedTxExtraXmr
     | null;
 
   encodedTx?: IEncodedTx;

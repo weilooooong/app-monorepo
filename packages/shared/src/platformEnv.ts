@@ -7,14 +7,18 @@ export type IPlatform = 'native' | 'desktop' | 'ext' | 'web' | 'webEmbed';
 export type IDistributionChannel =
   | 'ext-chrome'
   | 'ext-firefox'
+  | 'ext-edge'
   | 'desktop-mac'
   | 'desktop-mac-arm64'
   | 'desktop-win'
+  | 'desktop-win-ms-store'
   | 'desktop-linux'
+  | 'desktop-linux-snap'
   | 'native-ios'
   | 'native-ios-store'
   | 'native-android'
   | 'native-android-google'
+  | 'native-android-huawei'
   | 'native-ios-pad'
   | 'native-ios-pad-store';
 
@@ -22,6 +26,8 @@ const { NODE_ENV } = process.env;
 const { JEST_WORKER_ID } = process.env;
 
 export type IPlatformEnv = {
+  isNewRouteMode: boolean;
+
   version: string | undefined;
   buildNumber: string | undefined;
   NODE_ENV?: string;
@@ -47,7 +53,9 @@ export type IPlatformEnv = {
   isNative?: boolean;
 
   isDesktopLinux?: boolean;
+  isDesktopLinuxSnap?: boolean;
   isDesktopWin?: boolean;
+  isDesktopWinMsStore?: boolean;
   /** macos arm64 & x86 */
   isDesktopMac?: boolean;
   /** macos arm64 only */
@@ -57,6 +65,7 @@ export type IPlatformEnv = {
 
   isExtFirefox?: boolean;
   isExtChrome?: boolean;
+  isExtEdge?: boolean;
   isExtFirefoxUiPopup?: boolean;
 
   /** ios, both tablet & iPhone */
@@ -69,6 +78,7 @@ export type IPlatformEnv = {
   isNativeIOSPadStore?: boolean;
   isNativeAndroid?: boolean;
   isNativeAndroidGooglePlay?: boolean;
+  isNativeAndroidHuawei?: boolean;
 
   symbol: IPlatform | undefined;
   distributionChannel: IDistributionChannel | undefined;
@@ -87,6 +97,9 @@ export type IPlatformEnv = {
   isRuntimeChrome?: boolean;
 
   canGetClipboard?: boolean;
+  supportAutoUpdate?: boolean;
+
+  isAppleStoreEnv?: boolean;
 };
 
 const isJest = JEST_WORKER_ID !== undefined || NODE_ENV === 'test';
@@ -102,11 +115,16 @@ const isNative = process.env.ONEKEY_PLATFORM === 'app';
 
 const isExtChrome = process.env.EXT_CHANNEL === 'chrome';
 const isExtFirefox = process.env.EXT_CHANNEL === 'firefox';
+const isExtEdge = process.env.EXT_CHANNEL === 'edge';
 
 const isDesktopMac = isDesktop && window?.desktopApi?.platform === 'darwin';
 const isDesktopMacArm64 = isDesktopMac && window?.desktopApi?.arch === 'arm64';
 const isDesktopWin = isDesktop && window?.desktopApi?.platform === 'win32';
+const isDesktopWinMsStore =
+  isDesktopWin && process.env.DESK_CHANNEL === 'ms-store';
 const isDesktopLinux = isDesktop && window?.desktopApi?.platform === 'linux';
+const isDesktopLinuxSnap =
+  isDesktopLinux && window?.desktopApi?.channel === 'snap';
 
 const isNativeIOS = isNative && Platform.OS === 'ios';
 const isNativeIOSStore = isNativeIOS && isProduction;
@@ -117,6 +135,8 @@ const isNativeIOSPadStore = isNativeIOSPad && isProduction;
 const isNativeAndroid = isNative && Platform.OS === 'android';
 const isNativeAndroidGooglePlay =
   isNativeAndroid && process.env.ANDROID_CHANNEL === 'google';
+const isNativeAndroidHuawei =
+  isNativeAndroid && process.env.ANDROID_CHANNEL === 'huawei';
 const isMas = isDesktop && window?.desktopApi?.isMas;
 
 // for platform building by file extension
@@ -131,10 +151,13 @@ const getPlatformSymbol = (): IPlatform | undefined => {
 const getDistributionChannel = (): IDistributionChannel | undefined => {
   if (isExtChrome) return 'ext-chrome';
   if (isExtFirefox) return 'ext-firefox';
+  if (isExtEdge) return 'ext-edge';
 
   if (isDesktopMacArm64) return 'desktop-mac-arm64';
   if (isDesktopMac) return 'desktop-mac';
+  if (isDesktopWinMsStore) return 'desktop-win-ms-store';
   if (isDesktopWin) return 'desktop-win';
+  if (isDesktopLinuxSnap) return 'desktop-linux-snap';
   if (isDesktopLinux) return 'desktop-linux';
 
   if (isNativeIOSPadStore) return 'native-ios-pad-store';
@@ -142,6 +165,7 @@ const getDistributionChannel = (): IDistributionChannel | undefined => {
   if (isNativeIOSStore) return 'native-ios-store';
   if (isNativeIOS) return 'native-ios';
   if (isNativeAndroidGooglePlay) return 'native-android-google';
+  if (isNativeAndroidHuawei) return 'native-android-huawei';
   if (isNativeAndroid) return 'native-android';
 };
 
@@ -228,7 +252,14 @@ export const isManifestV3: boolean =
 
 export const canGetClipboard: boolean = !isWeb && !isExtension;
 
+export const supportAutoUpdate: boolean =
+  isDesktop && !(isMas || isDesktopLinuxSnap || isDesktopWinMsStore);
+
+export const isAppleStoreEnv = isMas || isNativeIOSStore || isNativeIOSPadStore;
+
 const platformEnv: IPlatformEnv = {
+  isNewRouteMode: true,
+
   version: process.env.VERSION,
   buildNumber: process.env.BUILD_NUMBER,
 
@@ -250,12 +281,15 @@ const platformEnv: IPlatformEnv = {
 
   isDesktopMac,
   isDesktopWin,
+  isDesktopWinMsStore,
   isDesktopMacArm64,
   isDesktopLinux,
+  isDesktopLinuxSnap,
   isMas,
 
   isExtFirefox,
   isExtChrome,
+  isExtEdge,
 
   isNativeIOS,
   isNativeIOSStore,
@@ -264,6 +298,7 @@ const platformEnv: IPlatformEnv = {
   isNativeIOSPadStore,
   isNativeAndroid,
   isNativeAndroidGooglePlay,
+  isNativeAndroidHuawei,
 
   symbol: getPlatformSymbol(),
   distributionChannel: getDistributionChannel(),
@@ -283,6 +318,8 @@ const platformEnv: IPlatformEnv = {
   isRuntimeChrome,
 
   canGetClipboard,
+  supportAutoUpdate,
+  isAppleStoreEnv,
 };
 
 if (isDev) {

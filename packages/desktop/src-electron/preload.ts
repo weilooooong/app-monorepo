@@ -32,13 +32,15 @@ export type PrefType =
   | 'bluetooth'
   | 'location'
   | 'notification'
-  | 'locationService';
+  | 'locationService'
+  | 'localNetwork';
 export type DesktopAPI = {
   on: (channel: string, func: (...args: any[]) => any) => void;
   hello: string;
   arch: string;
   platform: string;
   isMas: boolean;
+  channel?: string;
   reload: () => void;
   ready: () => void;
   focus: () => void;
@@ -93,6 +95,7 @@ export type DesktopAPI = {
     body: string,
   ) => void;
   stopServer: () => void;
+  quitApp: () => void;
 };
 declare global {
   interface Window {
@@ -136,6 +139,20 @@ const validChannels = [
   'touch/update-progress',
 ];
 
+const getChannel = () => {
+  let channel;
+  try {
+    if (process.platform === 'linux' && process.env.APPIMAGE) {
+      channel = 'appImage';
+    } else if (process.platform === 'linux' && process.env.SNAP) {
+      channel = 'snap';
+    }
+  } catch (e) {
+    // ignore
+  }
+  return channel;
+};
+
 const desktopApi = {
   on: (channel: string, func: (...args: any[]) => any) => {
     if (validChannels.includes(channel)) {
@@ -146,6 +163,7 @@ const desktopApi = {
   arch: process.arch,
   platform: process.platform,
   isMas: process.mas,
+  channel: getChannel(),
   ready: () => ipcRenderer.send('app/ready'),
   reload: () => ipcRenderer.send('app/reload'),
   focus: () => ipcRenderer.send('app/focus'),
@@ -244,6 +262,9 @@ const desktopApi = {
     body: string,
   ) => {
     ipcRenderer.send('server/respond', { requestId, code, type, body });
+  },
+  quitApp: () => {
+    ipcRenderer.send('app/quit');
   },
 };
 

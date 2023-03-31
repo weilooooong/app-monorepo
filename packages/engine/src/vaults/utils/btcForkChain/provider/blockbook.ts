@@ -96,9 +96,33 @@ class BlockBook {
       .then((i: any) => i.data);
   }
 
-  getBalance(address: string): Promise<BigNumber> {
+  getAccountWithAddress(
+    address: string,
+    params: Record<string, any>,
+  ): Promise<any> {
     return this.request
-      .get(`/api/v2/xpub/${address}`, {
+      .get(`/api/v2/address/${address}`, { params })
+      .then((i: any) => i.data);
+  }
+
+  getBalance(xpub: string): Promise<BigNumber> {
+    return this.request
+      .get(`/api/v2/xpub/${xpub}`, {
+        params: { details: 'basic' },
+      })
+      .then((response) => {
+        const { data } = response;
+        const balance = new BigNumber(data.balance);
+        const unconfirmedBalance = new BigNumber(data.unconfirmedBalance);
+        return !unconfirmedBalance.isNaN() && !unconfirmedBalance.isZero()
+          ? balance.plus(unconfirmedBalance)
+          : balance;
+      });
+  }
+
+  getBalanceWithAddress(address: string): Promise<BigNumber> {
+    return this.request
+      .get(`/api/v2/address/${address}`, {
         params: { details: 'basic' },
       })
       .then((response) => {

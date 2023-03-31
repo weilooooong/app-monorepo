@@ -5,6 +5,7 @@ import { useRoute } from '@react-navigation/core';
 import natsort from 'natsort';
 import { useIntl } from 'react-intl';
 import { StyleSheet } from 'react-native';
+import semver from 'semver';
 
 import {
   Box,
@@ -17,30 +18,31 @@ import {
   ToastManager,
   useIsVerticalLayout,
 } from '@onekeyhq/components';
+import { backupPlatform } from '@onekeyhq/shared/src/cloudfs';
 import { RestoreResult } from '@onekeyhq/shared/src/services/ServiceCloudBackup/ServiceCloudBackup.enums';
 import type { PublicBackupData } from '@onekeyhq/shared/src/services/ServiceCloudBackup/ServiceCloudBackup.types';
 import type { Avatar } from '@onekeyhq/shared/src/utils/emojiUtils';
 
 import backgroundApiProxy from '../../../../background/instance/backgroundApiProxy';
 import { useNavigation } from '../../../../hooks';
-import { useData } from '../../../../hooks/redux';
+import { useAppSelector, useData } from '../../../../hooks/redux';
 import useImportBackupPasswordModal from '../../../../hooks/useImportBackupPasswordModal';
 import useLocalAuthenticationModal from '../../../../hooks/useLocalAuthenticationModal';
 import { useOnboardingDone } from '../../../../hooks/useOnboardingRequired';
-import { HomeRoutes } from '../../../../routes/types';
+import { RootRoutes } from '../../../../routes/routesEnum';
 import { showOverlay } from '../../../../utils/overlayUtils';
 
 import BackupIcon from './BackupIcon';
 import BackupSummary from './BackupSummary';
+import { showUpgrateDialog } from './UpgrateDialog';
 import Wrapper from './Wrapper';
 
 import type {
+  HomeRoutes,
   HomeRoutesParams,
-  RootRoutes,
   RootRoutesParams,
 } from '../../../../routes/types';
 import type { RouteProp } from '@react-navigation/core';
-import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { IBoxProps } from 'native-base';
 
@@ -49,9 +51,9 @@ type BackupDetailsRouteProp = RouteProp<
   HomeRoutes.CloudBackupDetails
 >;
 
-type NavigationProps = CompositeNavigationProp<
-  NativeStackNavigationProp<RootRoutesParams, RootRoutes.Root>,
-  NativeStackNavigationProp<HomeRoutesParams, HomeRoutes.InitialTab>
+type NavigationProps = NativeStackNavigationProp<
+  RootRoutesParams,
+  RootRoutes.Main
 >;
 
 const WalletBackupItem = ({
@@ -251,6 +253,7 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
   const isSmallScreen = useIsVerticalLayout();
   const navigation = useNavigation<NavigationProps>();
   const route = useRoute<BackupDetailsRouteProp>();
+  const localVersion = useAppSelector((s) => s.settings.version);
 
   const { isPasswordSet } = useData();
   const { serviceCloudBackup } = backgroundApiProxy;
@@ -275,7 +278,6 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
   } = route.params;
 
   const [dataReady, setDataReady] = useState(true);
-  const [deleting, setDeleting] = useState(false);
   const [backupData, setBackupData] = useState({
     alreadyOnDevice: {
       contacts: {},
@@ -291,23 +293,39 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
     },
   });
   const [hasLocalData, setHasLocalData] = useState(false);
+  const [version, setVersion] = useState<string | undefined>();
   const [hasRemoteData, setHasRemoteData] = useState(false);
 
+  const checkVersion = useCallback(() => {
+    // old version
+    if (version === undefined) {
+      return true;
+    }
+    // data version >= local version
+    if (version && semver.gt(version, localVersion)) {
+      return false;
+    }
+    return true;
+  }, [localVersion, version]);
+
   useEffect(() => {
-    serviceCloudBackup.getBackupDetails(backupUUID).then((backupDetails) => {
-      setBackupData(backupDetails);
-      setHasLocalData(
-        Object.values(backupDetails.alreadyOnDevice).some(
-          (o) => Object.keys(o).length > 0,
-        ),
-      );
-      setHasRemoteData(
-        Object.values(backupDetails.notOnDevice).some(
-          (o) => Object.keys(o).length > 0,
-        ),
-      );
-      setDataReady(false);
-    });
+    serviceCloudBackup
+      .getBackupDetails(backupUUID)
+      .then(({ backupDetails, appVersion }) => {
+        setVersion(appVersion);
+        setBackupData(backupDetails);
+        setHasLocalData(
+          Object.values(backupDetails.alreadyOnDevice).some(
+            (o) => Object.keys(o).length > 0,
+          ),
+        );
+        setHasRemoteData(
+          Object.values(backupDetails.notOnDevice).some(
+            (o) => Object.keys(o).length > 0,
+          ),
+        );
+        setDataReady(false);
+      });
   }, [setDataReady, serviceCloudBackup, backupUUID]);
 
   const onImportDone = useCallback(async () => {
@@ -317,7 +335,7 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
     if (onboarding) {
       await onboardingDone({ delay: 200 });
     } else {
-      navigation.navigate(HomeRoutes.InitialTab);
+      navigation.navigate(RootRoutes.Main);
     }
   }, [intl, onboarding, onboardingDone, navigation]);
 
@@ -334,6 +352,10 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
   }, [intl, navigation]);
 
   const onImport = useCallback(() => {
+    if (checkVersion() === false) {
+      showUpgrateDialog();
+      return;
+    }
     if (isPasswordSet) {
       showVerify(
         (localPassword) => {
@@ -380,13 +402,14 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
     }
   }, [
     isPasswordSet,
+    checkVersion,
     showVerify,
-    onImportDone,
-    onImportError,
-    requestBackupPassword,
     serviceCloudBackup,
     backupUUID,
-    backupData,
+    backupData.notOnDevice,
+    onImportDone,
+    requestBackupPassword,
+    onImportError,
   ]);
 
   const onDelete = useCallback(() => {
@@ -397,15 +420,13 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
         footerButtonProps={{
           primaryActionTranslationId: 'action__delete',
           secondaryActionTranslationId: 'action__cancel',
-          primaryActionProps: { type: 'destructive' },
-          onPrimaryActionPress: async () => {
-            if (!deleting) {
-              setDeleting(true);
+          primaryActionProps: {
+            type: 'destructive',
+            onPromise: async () => {
               await serviceCloudBackup.removeBackup(backupUUID);
-              setDeleting(false);
               onClose();
               navigation.pop(2);
-            }
+            },
           },
         }}
         contentProps={{
@@ -413,13 +434,16 @@ const BackupDetails: FC<{ onboarding: boolean }> = ({ onboarding = false }) => {
           title: intl.formatMessage({
             id: 'dialog__delete_backup',
           }),
-          content: intl.formatMessage({
-            id: 'dialog__delete_backup_desc',
-          }),
+          content: intl.formatMessage(
+            {
+              id: 'dialog__delete_backup_desc',
+            },
+            { 'cloudName': backupPlatform().cloudName },
+          ),
         }}
       />
     ));
-  }, [backupUUID, deleting, intl, navigation, serviceCloudBackup]);
+  }, [backupUUID, intl, navigation, serviceCloudBackup]);
 
   return (
     <Wrapper

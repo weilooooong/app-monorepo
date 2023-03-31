@@ -2,8 +2,24 @@ import BigNumber from 'bignumber.js';
 
 import type { Network } from '@onekeyhq/engine/src/types/network';
 import type { Token } from '@onekeyhq/engine/src/types/token';
+import type {
+  IDecodedTx,
+  IFeeInfoUnit,
+} from '@onekeyhq/engine/src/vaults/types';
+import {
+  calculateTotalFeeNative,
+  calculateTotalFeeRange,
+} from '@onekeyhq/engine/src/vaults/utils/feeInfoUtils';
+import { IMPL_EVM, IMPL_SOL } from '@onekeyhq/shared/src/engine/engineConsts';
 
-import type { BuildTransactionParams, FetchQuoteParams } from './typings';
+import { QuoterType } from './typings';
+
+import type {
+  BuildTransactionParams,
+  FetchQuoteParams,
+  ProtocolFees,
+  TransactionDetails,
+} from './typings';
 
 export const nativeTokenAddress = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 export const feeRecipient = '0xc1e92BD5d1aa6e5f5F299D0490BefD9D8E5a887a';
@@ -156,11 +172,15 @@ export function getChainIdFromNetworkId(networdId: string) {
   return networdId.split('--')[1] ?? '';
 }
 
-export function isEvmNetworkId(networdId?: string) {
+export function getNetworkIdImpl(networdId?: string) {
   if (!networdId) {
     return;
   }
-  return networdId.split('--')[0] === 'evm';
+  return networdId.split('--')[0];
+}
+
+export function isEvmNetworkId(networdId?: string) {
+  return getNetworkIdImpl(networdId) === IMPL_EVM;
 }
 
 export function getEvmTokenAddress(token: Token) {
@@ -250,4 +270,90 @@ export function convertBuildParams(params: BuildTransactionParams) {
   urlParams.fromTokenAmount = params.sellAmount;
   delete urlParams.toTokenAmount;
   return urlParams;
+}
+
+export const normalizeProviderName = (text: string) => {
+  if (text === 'swftc') {
+    return 'SWFT';
+  }
+  return text;
+};
+
+export const calculateProtocalsFee = (protocolFees: ProtocolFees) => {
+  const { amount, asset } = protocolFees;
+  const bn = new BigNumber(amount);
+  const decimals = new BigNumber(asset.decimals);
+  const base = new BigNumber(10);
+  const value = bn.dividedBy(base.exponentiatedBy(decimals)).toFixed();
+  return { value, symbol: asset.symbol };
+};
+
+export function calculateDecodedTxNetworkFee(
+  decodedTx: IDecodedTx,
+  network: Network,
+) {
+  const { feeInfo, totalFeeInNative } = decodedTx;
+  if (totalFeeInNative) {
+    return totalFeeInNative;
+  }
+  if (feeInfo) {
+    const feeRange = calculateTotalFeeRange(feeInfo);
+    const calculatedTotalFeeInNative = calculateTotalFeeNative({
+      amount: feeRange.max,
+      info: {
+        defaultPresetIndex: '0',
+        prices: [],
+        feeSymbol: network.feeSymbol,
+        feeDecimals: network.feeDecimals,
+        nativeSymbol: network.symbol,
+        nativeDecimals: network.decimals,
+      },
+    });
+    return calculatedTotalFeeInNative;
+  }
+}
+
+export function calculateNetworkFee(feeInfo: IFeeInfoUnit, network: Network) {
+  const feeRange = calculateTotalFeeRange(feeInfo);
+  const calculatedTotalFeeInNative = calculateTotalFeeNative({
+    amount: feeRange.max,
+    info: {
+      defaultPresetIndex: '0',
+      prices: [],
+      feeSymbol: network.feeSymbol,
+      feeDecimals: network.feeDecimals,
+      nativeSymbol: network.symbol,
+      nativeDecimals: network.decimals,
+    },
+  });
+  return calculatedTotalFeeInNative;
+}
+
+export function getQuoteType(tx: TransactionDetails): QuoterType {
+  if (tx.quoterType) {
+    return tx.quoterType;
+  }
+  if (tx.thirdPartyOrderId) {
+    return QuoterType.swftc;
+  }
+  return QuoterType.zeroX;
+}
+
+export function isSimpleTx(tx: TransactionDetails) {
+  const from = tx.tokens?.from;
+  const to = tx.tokens?.to;
+  const quoterType = getQuoteType(tx);
+  return from?.networkId === to?.networkId && quoterType !== QuoterType.swftc;
+}
+
+export function recipientMustBeSendingAccount(
+  tokenA: Token,
+  tokenB: Token,
+  allowAnotherRecipientAddress?: boolean,
+) {
+  const implA = getNetworkIdImpl(tokenA.networkId);
+  const implB = getNetworkIdImpl(tokenB.networkId);
+  return (
+    implA === implB && (!allowAnotherRecipientAddress || implA === IMPL_SOL)
+  );
 }

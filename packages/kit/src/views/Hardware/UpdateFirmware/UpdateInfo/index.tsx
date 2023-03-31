@@ -26,8 +26,8 @@ import type { Device } from '@onekeyhq/engine/src/types/device';
 import TouchConnectDesktop from '@onekeyhq/kit/assets/illus_touch_connect_desktop.png';
 import backgroundApiProxy from '@onekeyhq/kit/src/background/instance/backgroundApiProxy';
 import { useSettings } from '@onekeyhq/kit/src/hooks/redux';
-import type { HardwareUpdateRoutesParams } from '@onekeyhq/kit/src/routes/Modal/HardwareUpdate';
-import { HardwareUpdateModalRoutes } from '@onekeyhq/kit/src/routes/Modal/HardwareUpdate';
+import type { HardwareUpdateRoutesParams } from '@onekeyhq/kit/src/routes/Root/Modal/HardwareUpdate';
+import { HardwareUpdateModalRoutes } from '@onekeyhq/kit/src/routes/routesEnum';
 import type { ModalScreenProps } from '@onekeyhq/kit/src/routes/types';
 import { showOverlay } from '@onekeyhq/kit/src/utils/overlayUtils';
 import type {
@@ -58,6 +58,7 @@ const UpdateInfoModal: FC = () => {
   const { recheckFirmwareUpdate, onSuccess } = routeParams;
   const deviceId = get(routeParams, 'deviceId', null);
   const walletId = get(routeParams, 'walletId', null);
+  const deviceConnectId = get(routeParams, 'connectId', null);
 
   const { engine, serviceHardware } = backgroundApiProxy;
   const { deviceUpdates } = useSettings();
@@ -131,9 +132,25 @@ const UpdateInfoModal: FC = () => {
         findDevice = await engine.getHWDeviceByDeviceId(deviceId);
       } else if (walletId) {
         findDevice = await engine.getHWDeviceByWalletId(walletId);
+      } else if (deviceConnectId) {
+        findDevice =
+          (await engine.getHWDevices()).find(
+            (d) => d.mac === deviceConnectId,
+          ) ?? null;
       }
 
       if (!findDevice) {
+        setTimeout(() => {
+          ToastManager.show(
+            {
+              title: intl.formatMessage({
+                id: 'msg__hardware_software_cannot_be_upgrade',
+              }),
+            },
+            { type: 'default' },
+          );
+        }, 500);
+
         navigation.goBack();
         return;
       }
@@ -142,8 +159,15 @@ const UpdateInfoModal: FC = () => {
 
       const connectId = findDevice.mac;
 
-      const deviceFeatures = await serviceHardware.getFeatures(connectId ?? '');
-      setFeatures(deviceFeatures);
+      let deviceFeatures: IOneKeyDeviceFeatures;
+      try {
+        deviceFeatures = await serviceHardware.getFeatures(connectId ?? '');
+        setFeatures(deviceFeatures);
+      } catch (error) {
+        deviceUtils.showErrorToast(error);
+        navigation.goBack();
+        return;
+      }
 
       let { ble, firmware } = deviceUpdates?.[connectId] || {};
 
@@ -201,6 +225,7 @@ const UpdateInfoModal: FC = () => {
     walletId,
     showUpdateOnDesktopModal,
     isSmallScreen,
+    deviceConnectId,
   ]);
 
   const buttonEnable = useMemo(() => {
