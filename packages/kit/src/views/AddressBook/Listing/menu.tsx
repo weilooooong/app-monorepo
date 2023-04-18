@@ -37,10 +37,12 @@ const AddressBookMenu: FC<Props> = ({ contact, ...props }) => {
   }, [navigation, name, address, networkId, id]);
 
   const onCopy = useCallback(() => {
-    copyToClipboard(address);
-    ToastManager.show({
-      title: intl.formatMessage({ id: 'msg__address_copied' }),
-    });
+    setTimeout(() => {
+      copyToClipboard(address);
+      ToastManager.show({
+        title: intl.formatMessage({ id: 'msg__address_copied' }),
+      });
+    }, 200);
   }, [intl, address]);
 
   const onDel = useCallback(() => {
@@ -64,7 +66,7 @@ const AddressBookMenu: FC<Props> = ({ contact, ...props }) => {
       {
         id: 'action__edit',
         onPress: onEdit,
-        icon: 'PencilOutline',
+        icon: 'PencilMini',
       },
       {
         id: 'action__copy_address',
@@ -74,7 +76,7 @@ const AddressBookMenu: FC<Props> = ({ contact, ...props }) => {
       {
         id: 'action__delete',
         onPress: onDel,
-        icon: 'TrashOutline',
+        icon: 'TrashMini',
         variant: 'desctructive',
       },
     ],

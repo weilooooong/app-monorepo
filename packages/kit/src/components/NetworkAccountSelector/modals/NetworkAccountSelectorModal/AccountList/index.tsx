@@ -44,9 +44,12 @@ export function searchAccount(
   accounts: INetworkAccountSelectorAccountListSectionData[],
   terms: string,
 ): INetworkAccountSelectorAccountListSectionData[] {
+  const keywork = terms.toLowerCase();
   return accounts.map((item) => {
     const searchResult = item.data.filter(
-      ({ name, address }) => name.includes(terms) || address.includes(terms),
+      ({ name, address }) =>
+        name.toLowerCase().includes(keywork) ||
+        address.toLowerCase().includes(keywork),
     );
     return {
       ...item,
@@ -351,7 +354,6 @@ function AccountList({
       renderSectionHeader={({
         section,
       }: {
-        // eslint-disable-next-line react/no-unused-prop-types
         section: INetworkAccountSelectorAccountListSectionData;
       }) => {
         if (isListAccountsSingleWalletMode) {

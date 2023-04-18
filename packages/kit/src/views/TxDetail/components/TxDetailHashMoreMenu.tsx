@@ -10,10 +10,10 @@ import BaseMenu from '../../Overlay/BaseMenu';
 
 import type { IBaseMenuOptions, IMenu } from '../../Overlay/BaseMenu';
 
-type Props = {
+interface Props extends IMenu {
   decodedTx: IDecodedTx;
-};
-const TxDetailHashMoreMenu: FC<IMenu & Props> = (props) => {
+}
+export const TxDetailHashMoreMenu: FC<Props> = (props) => {
   const { decodedTx } = props;
   const { copyText } = useClipboard();
   const { network } = useNetwork({ networkId: decodedTx.networkId });
@@ -36,5 +36,3 @@ const TxDetailHashMoreMenu: FC<IMenu & Props> = (props) => {
 
   return <BaseMenu options={options} {...props} />;
 };
-
-export { TxDetailHashMoreMenu };

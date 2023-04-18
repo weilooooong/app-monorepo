@@ -9,8 +9,9 @@ import type { NativeSyntheticEvent, StyleProp, ViewStyle } from 'react-native';
 
 const getDrawerWidth = () => {
   const { width } = Dimensions.get('window');
-  // must sync with drawer width
-  return width * 0.85;
+  const expectedWidth = width * 0.85;
+  const maxWidth = 400;
+  return Math.min(maxWidth, expectedWidth);
 };
 
 export const nestedTabStartX = makeMutable(0);

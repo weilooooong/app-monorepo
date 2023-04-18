@@ -504,6 +504,28 @@ function PreSendAddress() {
     ],
   );
 
+  // Refersh pending tx status before entering the send confirm modal
+  // To avoid pending tx alert on send confirm modal (actually there isn't)
+  useEffect(() => {
+    const refreshPendingTx = async () => {
+      const pendingTxs =
+        await backgroundApiProxy.serviceHistory.getLocalHistory({
+          networkId,
+          accountId,
+          isPending: true,
+          limit: 1,
+        });
+      if (pendingTxs.length > 0) {
+        backgroundApiProxy.serviceHistory.refreshHistory({
+          networkId,
+          accountId,
+        });
+      }
+    };
+
+    refreshPendingTx();
+  }, [accountId, networkId]);
+
   return (
     <BaseSendModal
       accountId={accountId}
@@ -558,17 +580,6 @@ function PreSendAddress() {
               </Form.Item>
               {DestinationTagForm}
             </Form>
-            <Box
-              height={
-                validateMessage.warningMessage?.length > 0 ||
-                validateMessage.successMessage?.length > 0 ||
-                validateMessage.errorMessage?.length > 0 ||
-                // @ts-ignore
-                formState?.errors?.to?.message?.length > 0
-                  ? 0
-                  : '28px'
-              }
-            />
             <GoPlusSecurityItems items={securityItems} />
           </Box>
         ),

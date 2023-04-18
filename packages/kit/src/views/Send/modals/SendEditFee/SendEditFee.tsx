@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/naming-convention */
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useNavigation, useRoute } from '@react-navigation/native';
 import BigNumber from 'bignumber.js';
@@ -10,15 +10,20 @@ import {
   Box,
   Button,
   Center,
+  CheckBox,
+  HStack,
   Spinner,
+  Text,
   ToastManager,
   useForm,
+  useIsVerticalLayout,
 } from '@onekeyhq/components';
 import type { LocaleIds } from '@onekeyhq/components/src/locale';
 import type { EIP1559Fee } from '@onekeyhq/engine/src/types/network';
 import type { IEncodedTxBtc } from '@onekeyhq/engine/src/vaults/impl/btc/types';
 import type { IEncodedTxEvm } from '@onekeyhq/engine/src/vaults/impl/evm/Vault';
 import type {
+  IFeeInfoSelected,
   IFeeInfoSelectedType,
   IFeeInfoUnit,
 } from '@onekeyhq/engine/src/vaults/types';
@@ -33,16 +38,18 @@ import { BaseSendModal } from '../../components/BaseSendModal';
 import { DecodeTxButtonTest } from '../../components/DecodeTxButtonTest';
 import { ESendEditFeeTypes } from '../../enums';
 import { SendModalRoutes } from '../../types';
+import { getCustomFeeSpeedInfo } from '../../utils/getCustomFeeSpeedInfo';
 import {
   IS_REPLACE_ROUTE_TO_FEE_EDIT,
   SEND_EDIT_FEE_PRICE_UP_RATIO,
 } from '../../utils/sendConfirmConsts';
+import { useBtcCustomFee } from '../../utils/useBtcCustomFee';
+import { useCustomFee } from '../../utils/useCustomFee';
 import { useFeeInfoPayload } from '../../utils/useFeeInfoPayload';
 
 import { SendEditFeeCustomForm } from './SendEditFeeCustomForm';
 import { SendEditFeeStandardForm } from './SendEditFeeStandardForm';
 import { SendEditFeeStandardFormLite } from './SendEditFeeStandardFormLite';
-import { SendEditFeeTabs } from './SendEditFeeTabs';
 
 import type {
   ISendEditFeeValues,
@@ -81,7 +88,15 @@ function selectMaxValue(
 
 function ScreenSendEditFee({ ...rest }) {
   const { trigger } = rest;
+
+  const [blockNativeInit, setBlockNativeInit] = useState(false);
+  const [saveCustom, setSaveCustom] = useState(false);
+  const [currentCustom, setCurrentCustom] = useState<IFeeInfoUnit | null>(null);
+  const customFeeSynced = useRef<boolean>(false);
+
   const intl = useIntl();
+
+  const isVertical = useIsVerticalLayout();
 
   const navigation = useNavigation<NavigationProps>();
   const route = useRoute<RouteProps>();
@@ -99,18 +114,6 @@ function ScreenSendEditFee({ ...rest }) {
     networkId,
     accountId,
   });
-
-  const title = useMemo(() => {
-    let key: LocaleIds = 'action__edit_fee';
-
-    if (resendActionInfo?.type === 'speedUp') {
-      key = 'form__accelerated_transaction';
-    }
-    if (resendActionInfo?.type === 'cancel') {
-      key = 'form__cancelled_transaction';
-    }
-    return intl.formatMessage({ id: key });
-  }, [intl, resendActionInfo?.type]);
 
   useDisableNavigationAnimation({
     condition: !!autoConfirmAfterFeeSaved,
@@ -139,6 +142,7 @@ function ScreenSendEditFee({ ...rest }) {
     });
 
   const isEIP1559Fee = feeInfoPayload?.info?.eip1559;
+  const isBtcForkChain = feeInfoPayload?.info?.isBtcForkChain;
 
   useEffect(() => {
     debugLogger.sendTx.info('SendEditFee  >>>>  ', feeInfoPayload, encodedTx);
@@ -149,16 +153,54 @@ function ScreenSendEditFee({ ...rest }) {
   );
   const [radioValue, setRadioValue] = useState('');
 
+  const title = useMemo(() => {
+    let key: LocaleIds = 'action__edit_fee';
+
+    if (resendActionInfo?.type === 'speedUp') {
+      key = 'form__accelerated_transaction';
+    }
+    if (resendActionInfo?.type === 'cancel') {
+      key = 'form__cancelled_transaction';
+    }
+    if (feeType === ESendEditFeeTypes.advanced) {
+      key = 'title__custom';
+    }
+    return intl.formatMessage({ id: key });
+  }, [intl, resendActionInfo?.type, feeType]);
+
   // const isSmallScreen = useIsVerticalLayout();
   const useFormReturn = useForm<ISendEditFeeValues>({
     mode: 'onBlur',
     reValidateMode: 'onBlur',
   });
-  const { handleSubmit, setValue, trigger: formTrigger } = useFormReturn;
+  const {
+    handleSubmit,
+    setValue,
+    trigger: formTrigger,
+    formState,
+    watch,
+  } = useFormReturn;
+
+  const currentFeeType = useMemo<IFeeInfoSelectedType>(
+    () =>
+      feeType === ESendEditFeeTypes.advanced || radioValue === 'custom'
+        ? 'custom'
+        : 'preset',
+    [feeType, radioValue],
+  );
+
+  const watchBtcFeeRate = watch('feeRate');
+  const { btcTxFee } = useBtcCustomFee({
+    networkId,
+    accountId,
+    encodedTx,
+    feeRate: watchBtcFeeRate,
+    feeType: currentFeeType,
+  });
+  const { customFee, updateCustomFee } = useCustomFee(networkId);
 
   const onSubmit = handleSubmit(async (data) => {
-    let type: IFeeInfoSelectedType =
-      feeType === ESendEditFeeTypes.advanced ? 'custom' : 'preset';
+    let type = currentFeeType;
     // const values = getValues();
     if (!radioValue && type === 'preset') {
       type = 'custom';
@@ -171,15 +213,47 @@ function ScreenSendEditFee({ ...rest }) {
         maxFeePerGas: data.maxFeePerGas || '0',
       };
     }
-    const feeInfoSelected = {
+
+    const feeInfoSelected: IFeeInfoSelected = {
       type,
       preset: radioValue || '1',
-      custom: {
-        eip1559: isEIP1559Fee,
-        price: priceInfo,
-        limit: data.gasLimit || '0',
-      },
     };
+
+    const custom = {
+      eip1559: isEIP1559Fee,
+      limit: data.gasLimit || '0',
+      waitingSeconds: 0,
+      similarToPreset: '0',
+      ...(isEIP1559Fee
+        ? { price1559: priceInfo as EIP1559Fee }
+        : { price: priceInfo as string }),
+      ...(isBtcForkChain ? { feeRate: data.feeRate } : {}),
+    };
+
+    if (type === 'custom') {
+      feeInfoSelected.custom = custom;
+
+      const { customSimilarToPreset, customWaitingSeconds } =
+        getCustomFeeSpeedInfo({
+          custom: feeInfoSelected.custom,
+          prices: feeInfoPayload?.info.prices ?? [],
+          waitingSeconds: feeInfoPayload?.info.waitingSeconds ?? [],
+          isEIP1559Fee,
+        });
+
+      feeInfoSelected.custom.similarToPreset = customSimilarToPreset;
+      feeInfoSelected.custom.waitingSeconds = customWaitingSeconds;
+
+      if (isBtcForkChain) {
+        feeInfoSelected.custom.isBtcForkChain = isBtcForkChain;
+        if (data.feeRate) {
+          feeInfoSelected.custom.btcFee = parseInt(btcTxFee || '0');
+        }
+      }
+
+      setCurrentCustom(feeInfoSelected.custom);
+    }
+
     debugLogger.sendTx.info('SendEditFee Confirm >>>> ', feeInfoSelected);
     const { routes, index } = navigation.getState();
     const prevRouteName = routes[index - 1]?.name;
@@ -214,7 +288,7 @@ function ScreenSendEditFee({ ...rest }) {
             networkId,
             accountId,
             encodedTx: encodedTx as IEncodedTxBtc,
-            feeInfoValue: feeInfoSelected.custom,
+            feeInfoValue: custom,
           }),
         });
       } catch (e: any) {
@@ -244,6 +318,13 @@ function ScreenSendEditFee({ ...rest }) {
       );
     }
 
+    if (feeType === ESendEditFeeTypes.advanced) {
+      setRadioValue('custom');
+      setFeeType(ESendEditFeeTypes.standard);
+      updateCustomFee(saveCustom ? feeInfoSelected.custom : null);
+      return;
+    }
+
     return navigation.navigate({
       merge: true,
       name: toRouteName,
@@ -253,18 +334,43 @@ function ScreenSendEditFee({ ...rest }) {
 
   const setFormValuesFromFeeInfo = useCallback(
     (feeInfoValue: IFeeInfoUnit) => {
-      const { price, limit } = feeInfoValue;
+      const { price, limit, price1559 } = feeInfoValue;
       if (isEIP1559Fee) {
-        const priceInfo = price as EIP1559Fee;
-        setValue('baseFee', priceInfo.baseFee);
-        setValue('maxFeePerGas', priceInfo.maxFeePerGas);
-        setValue('maxPriorityFeePerGas', priceInfo.maxPriorityFeePerGas);
+        const priceInfo = price1559 as EIP1559Fee;
+        setValue('baseFee', new BigNumber(priceInfo.baseFee).toFixed());
+        setValue(
+          'maxFeePerGas',
+          new BigNumber(priceInfo.maxFeePerGas)
+            .times(autoConfirmAfterFeeSaved ? SEND_EDIT_FEE_PRICE_UP_RATIO : 1)
+            .toFixed(),
+        );
+        setValue(
+          'maxPriorityFeePerGas',
+          new BigNumber(priceInfo.maxPriorityFeePerGas)
+            .times(autoConfirmAfterFeeSaved ? SEND_EDIT_FEE_PRICE_UP_RATIO : 1)
+            .toFixed(),
+        );
       } else {
-        setValue('gasPrice', (price as string) ?? '');
+        setValue('gasPrice', new BigNumber(price ?? 0).toFixed());
       }
-      setValue('gasLimit', limit ?? '');
+
+      if (isBtcForkChain && !feeInfoValue.feeRate) {
+        setValue(
+          'feeRate',
+          new BigNumber(price ?? 0)
+            .shiftedBy(feeInfoPayload.info.feeDecimals ?? 8)
+            .toFixed(),
+        );
+      }
+      setValue('gasLimit', new BigNumber(limit ?? 0).toFixed());
     },
-    [isEIP1559Fee, setValue],
+    [
+      isEIP1559Fee,
+      isBtcForkChain,
+      setValue,
+      autoConfirmAfterFeeSaved,
+      feeInfoPayload?.info.feeDecimals,
+    ],
   );
 
   useEffect(() => {
@@ -276,12 +382,22 @@ function ScreenSendEditFee({ ...rest }) {
     ) {
       return;
     }
-    const { limit, price } = getSelectedFeeInfoUnit({
-      info: feeInfoPayload.info,
-      index: radioValue,
-    });
-    setFormValuesFromFeeInfo({ price, limit });
+
+    if (radioValue === 'custom' && currentCustom) {
+      setFormValuesFromFeeInfo(currentCustom);
+    } else {
+      const { limit, price, price1559 } = getSelectedFeeInfoUnit({
+        info: feeInfoPayload.info,
+        index: radioValue,
+      });
+
+      if (!currentCustom) {
+        setFormValuesFromFeeInfo({ price, price1559, limit });
+      }
+    }
   }, [
+    currentCustom,
+    customFee,
     feeInfoPayload,
     feeType,
     getSelectedFeeInfoUnit,
@@ -299,14 +415,12 @@ function ScreenSendEditFee({ ...rest }) {
 
   useEffect(() => {
     const selected = feeInfoPayload?.selected;
-    let type = selected?.type ?? 'preset';
-    if (
-      !feeInfoPayload ||
-      !feeInfoPayload?.info?.prices?.length ||
-      autoConfirmAfterFeeSaved
-    ) {
-      type = 'custom';
+    const type = selected?.type ?? 'preset';
+
+    if (!feeInfoPayload) {
+      return;
     }
+
     if (feeInfoPayload && type === 'preset') {
       let presetValue = selected?.preset || '1';
       // preset fix / presetFix
@@ -314,11 +428,12 @@ function ScreenSendEditFee({ ...rest }) {
         presetValue = '0';
       }
       setRadioValue(presetValue);
-      setFeeType(ESendEditFeeTypes.standard);
     } else if (type === 'custom') {
       const customValues = cloneDeep(selected?.custom ?? {});
-      setFeeType(ESendEditFeeTypes.advanced);
       if (customValues) {
+        setCurrentCustom(customValues);
+        setRadioValue('custom');
+        setFormValuesFromFeeInfo(customValues);
         // build fee customValues for speedUp & cancel tx
         if (autoConfirmAfterFeeSaved) {
           const actionType = oldSendConfirmParams?.actionType;
@@ -339,7 +454,7 @@ function ScreenSendEditFee({ ...rest }) {
           }
 
           if (customValues?.eip1559) {
-            const eip1559Price = customValues.price as EIP1559Fee;
+            const eip1559Price = customValues.price1559 as EIP1559Fee;
             if (eip1559Price) {
               const highPriceInfo = highPriceData as EIP1559Fee | undefined;
               eip1559Price.baseFee =
@@ -363,8 +478,9 @@ function ScreenSendEditFee({ ...rest }) {
               SEND_EDIT_FEE_PRICE_UP_RATIO,
             );
           }
+
+          setFeeType(ESendEditFeeTypes.advanced);
         }
-        setFormValuesFromFeeInfo(customValues);
       }
     }
   }, [
@@ -377,6 +493,25 @@ function ScreenSendEditFee({ ...rest }) {
     setValue,
   ]);
 
+  useEffect(() => {
+    setSaveCustom(!!customFee);
+
+    if (
+      !customFeeSynced.current &&
+      customFee !== undefined &&
+      feeInfoPayload &&
+      feeInfoPayload?.selected.type !== 'custom'
+    ) {
+      if (customFee) {
+        setCurrentCustom({
+          ...customFee,
+          limit: feeInfoPayload?.info.limit,
+        });
+      }
+      customFeeSynced.current = true;
+    }
+  }, [customFee, feeInfoPayload]);
+
   let content = (
     <Center w="full" py={16}>
       <Spinner size="lg" />
@@ -386,11 +521,16 @@ function ScreenSendEditFee({ ...rest }) {
   if (feeType && !feeInfoLoading) {
     const customFeeForm = (
       <SendEditFeeCustomForm
+        blockNativeInit={blockNativeInit}
+        setBlockNativeInit={setBlockNativeInit}
         accountId={accountId}
         networkId={networkId}
         autoConfirmAfterFeeSaved={autoConfirmAfterFeeSaved}
         feeInfoPayload={feeInfoPayload}
         useFormReturn={useFormReturn}
+        saveCustom={saveCustom}
+        setSaveCustom={setSaveCustom}
+        encodedTx={encodedTx}
       />
     );
     const presetFeeForm = forBatchSend ? (
@@ -406,30 +546,26 @@ function ScreenSendEditFee({ ...rest }) {
         accountId={accountId}
         networkId={networkId}
         feeInfoPayload={feeInfoPayload}
+        currentFeeType={currentFeeType}
+        currentCustom={currentCustom}
         value={radioValue}
         onChange={(value) => {
-          setRadioValue(value);
+          if (value === 'custom') {
+            if (currentCustom && radioValue !== 'custom') {
+              setRadioValue(value);
+            } else {
+              setFeeType(ESendEditFeeTypes.advanced);
+            }
+          } else {
+            setRadioValue(value);
+          }
         }}
       />
     );
     content = feeInfoPayload ? (
-      <>
-        <SendEditFeeTabs
-          type={feeType}
-          onChange={(value) => {
-            setFeeType(
-              value === 0
-                ? ESendEditFeeTypes.standard
-                : ESendEditFeeTypes.advanced,
-            );
-          }}
-        />
-        <Box>
-          {feeType === ESendEditFeeTypes.standard
-            ? presetFeeForm
-            : customFeeForm}
-        </Box>
-      </>
+      <Box>
+        {feeType === ESendEditFeeTypes.standard ? presetFeeForm : customFeeForm}
+      </Box>
     ) : (
       <Box>{customFeeForm}</Box>
     );
@@ -438,15 +574,36 @@ function ScreenSendEditFee({ ...rest }) {
     }
   }
 
+  const isLargeModal =
+    !isVertical &&
+    !feeInfoLoading &&
+    feeType === ESendEditFeeTypes.advanced &&
+    blockNativeInit;
+
+  const buttonDisabled = useMemo(() => {
+    if (feeInfoLoading) {
+      return true;
+    }
+    if (isBtcForkChain || feeType === ESendEditFeeTypes.advanced) {
+      return !formState.isValid;
+    }
+    return false;
+  }, [isBtcForkChain, formState.isValid, feeType, feeInfoLoading]);
+
   return (
     <BaseSendModal
+      size={isLargeModal ? '2xl' : 'xs'}
       networkId={networkId}
       accountId={accountId}
       height="598px"
       trigger={trigger}
-      primaryActionTranslationId="action__apply"
+      primaryActionTranslationId={
+        feeType === ESendEditFeeTypes.advanced
+          ? 'action__save'
+          : 'action__apply'
+      }
       primaryActionProps={{
-        isDisabled: feeInfoLoading,
+        isDisabled: buttonDisabled,
       }}
       onPrimaryActionPress={() => onSubmit()}
       hideSecondaryAction
@@ -454,6 +611,38 @@ function ScreenSendEditFee({ ...rest }) {
         oldSendConfirmParams?.onModalClose?.();
       }}
       header={title}
+      footer={
+        isLargeModal ? (
+          <HStack
+            justifyContent="space-between"
+            alignItems="center"
+            paddingY={4}
+            paddingX={6}
+            borderTopWidth={1}
+            borderTopColor="border-subdued"
+          >
+            {isEIP1559Fee && (
+              <CheckBox
+                onChange={(isSelected) => setSaveCustom(isSelected)}
+                isChecked={saveCustom}
+              >
+                <Text typography="Body2Strong">
+                  {intl.formatMessage({
+                    id: 'action__save_as_default_for_custom',
+                  })}
+                </Text>
+              </CheckBox>
+            )}
+            <Button
+              isDisabled={!formState.isValid}
+              onPress={() => onSubmit()}
+              type="primary"
+            >
+              {intl.formatMessage({ id: 'action__save' })}
+            </Button>
+          </HStack>
+        ) : undefined
+      }
       scrollViewProps={{
         children: (
           <>

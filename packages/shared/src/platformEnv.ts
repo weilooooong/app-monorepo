@@ -95,6 +95,7 @@ export type IPlatformEnv = {
   isRuntimeBrowser?: boolean;
   isRuntimeFirefox?: boolean;
   isRuntimeChrome?: boolean;
+  isRuntimeEdge?: boolean;
 
   canGetClipboard?: boolean;
   supportAutoUpdate?: boolean;
@@ -174,6 +175,19 @@ const isRuntimeBrowser: boolean = typeof window !== 'undefined' && !isNative;
 // @ts-ignore
 const isRuntimeFirefox: boolean = typeof InstallTrigger !== 'undefined';
 
+const checkIsRuntimeEdge = (): boolean => {
+  if (!isRuntimeBrowser) {
+    return false;
+  }
+  const isChromium = window.chrome;
+  const winNav = window.navigator as typeof window.navigator | undefined;
+  const isIEedge = winNav ? winNav.userAgent.indexOf('Edg') > -1 : false;
+
+  if (isChromium && isIEedge === true) return true;
+
+  return false;
+};
+
 const checkIsRuntimeChrome = (): boolean => {
   if (!isRuntimeBrowser) {
     return false;
@@ -212,6 +226,7 @@ const checkIsRuntimeChrome = (): boolean => {
 };
 
 const isRuntimeChrome = checkIsRuntimeChrome();
+const isRuntimeEdge = checkIsRuntimeEdge();
 
 // Ext manifest v2 background
 export const isExtensionBackgroundHtml: boolean =
@@ -316,6 +331,7 @@ const platformEnv: IPlatformEnv = {
   isRuntimeBrowser,
   isRuntimeFirefox,
   isRuntimeChrome,
+  isRuntimeEdge,
 
   canGetClipboard,
   supportAutoUpdate,

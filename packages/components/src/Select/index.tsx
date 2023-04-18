@@ -8,7 +8,6 @@ import type {
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { flatten } from 'lodash';
-import { Icon as NBIcon } from 'native-base';
 import {
   StyleSheet,
   TouchableWithoutFeedback,
@@ -20,7 +19,6 @@ import { useUserDevice } from '@onekeyhq/components';
 
 import Box from '../Box';
 import Icon from '../Icon';
-import { ChevronDown } from '../Icon/react/mini';
 import OverlayContainer from '../OverlayContainer';
 import Pressable from '../Pressable';
 import Text from '../Text';
@@ -31,10 +29,9 @@ import Mobile from './Container/Mobile';
 
 import type { ICON_NAMES } from '../Icon';
 import type { ColorType } from 'native-base/lib/typescript/components/types';
-import type { GestureResponderEvent } from 'react-native-modal';
 
 interface CloseButtonProps {
-  onClose: (event: GestureResponderEvent) => void;
+  onClose?: () => void;
   backgroundColor?: string;
 }
 
@@ -122,6 +119,7 @@ export type SelectProps<T = string> = {
   withReactModal?: boolean;
   autoAdjustPosition?: boolean;
   outerContainerRef?: MutableRefObject<unknown>;
+  noTrigger?: boolean;
 };
 
 export type ChildProps<T> = Pick<
@@ -192,6 +190,7 @@ function Select<T = any>({
   withReactModal,
   autoAdjustPosition,
   outerContainerRef,
+  noTrigger,
 }: SelectProps<T>) {
   const triggerRef = useRef<HTMLElement | View>(null);
   const [innerVisible, setInnerVisible] = useState(false);
@@ -322,7 +321,9 @@ function Select<T = any>({
     onModalHide,
   ]);
 
-  return (
+  return noTrigger ? (
+    container
+  ) : (
     <Box ref={triggerRef} position="relative" {...containerProps}>
       <Pressable onPress={toggleVisible} {...triggerProps}>
         {({ isHovered, isFocused, isPressed }) =>
@@ -407,7 +408,9 @@ function Select<T = any>({
                   )}
                 </Box>
               </Box>
-              <NBIcon as={ChevronDown} size={5} ml="auto" />
+              <Box ml="auto">
+                <Icon size={5} name="ChevronDownMini" />
+              </Box>
             </Box>
           )
         }

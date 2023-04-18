@@ -10,7 +10,6 @@ import {
   Badge,
   Box,
   Center,
-  DialogManager,
   HStack,
   Icon,
   Image,
@@ -57,6 +56,9 @@ import {
   NeedBluetoothPermissions,
   NeedBluetoothTurnedOn,
 } from '../../../utils/hardware/errors';
+import { showDialog } from '../../../utils/overlayUtils';
+
+import type { RouteProp } from '@react-navigation/native';
 
 import type { RouteProp } from '@react-navigation/native';
 
@@ -167,7 +169,7 @@ const ConnectHardwareModal: FC = () => {
 
     const checkBridge = await serviceHardware.checkBridge();
     if (typeof checkBridge === 'boolean' && !checkBridge) {
-      DialogManager.show({ render: <NeedBridgeDialog /> });
+      showDialog(<NeedBridgeDialog />);
       return;
     }
     if (
@@ -187,7 +189,7 @@ const ConnectHardwareModal: FC = () => {
           },
         );
       } else {
-        DialogManager.show({ render: <NeedBridgeDialog /> });
+        showDialog(<NeedBridgeDialog />);
       }
       return;
     }

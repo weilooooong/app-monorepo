@@ -133,10 +133,12 @@ export type SendConfirmParams = SendConfirmSharedParams & {
   onDetail?: (txid: string) => any;
   signOnly?: boolean;
   ignoreFetchFeeCalling?: boolean;
+  hideSendFeedbackReceipt?: boolean;
 };
 export type SignMessageConfirmParams = SendConfirmSharedParams & {
   sourceInfo?: IDappSourceInfo;
   unsignedMessage: IUnsignedMessageEvm;
+  onSuccess?: (result: any) => void;
 };
 export type IWalletConnectExternalAccountInfo = {
   accountInfo?: IBaseExternalAccountInfo;
@@ -225,6 +227,8 @@ export type ITxConfirmViewProps = ModalProps & {
   feeInfoLoading: boolean;
   feeInfoEditable?: boolean;
   feeInput?: JSX.Element;
+  advancedSettings?: SendConfirmAdvancedSettings;
+  advancedSettingsForm?: JSX.Element | null;
   feeInfoError?: Error | null;
 
   confirmDisabled?: boolean;
@@ -271,6 +275,7 @@ export type ISendEditFeeValues = {
   maxFeePerGas: string;
   baseFee: string;
   totalFee: string;
+  feeRate: string;
 };
 
 export type BatchSendConfirmPayloadInfo = {
@@ -367,3 +372,15 @@ export type BatchSendConfirmOnSuccessData = {
   encodedTxs?: IEncodedTx[];
   decodedTxs?: IDecodedTx[];
 };
+
+export type SendConfirmAdvancedSettings = {
+  originNonce: string;
+  currentNonce: string;
+};
+
+export enum EditableNonceStatusEnum {
+  None = 'None',
+  Equal = 'Equal',
+  Less = 'Less',
+  Greater = 'Greater',
+}
