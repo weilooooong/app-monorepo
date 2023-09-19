@@ -16,6 +16,8 @@ export type { LocaleSymbol, LocaleIds } from './locale';
 export { LOCALES_OPTION } from './locale';
 
 export { ToastProvider, ToastController } from './Toast';
+export { Tabs } from './CollapsibleTabView';
+export * as DelayedFreeze from './DelayedFreeze';
 
 export { useThemeValue } from './Provider/hooks/useThemeValue';
 export { useIsMounted } from './Provider/hooks/useIsMounted';
