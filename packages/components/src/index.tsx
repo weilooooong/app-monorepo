@@ -19,7 +19,7 @@ export { ToastProvider, ToastController } from './Toast';
 export { Tabs } from './CollapsibleTabView';
 export * as DelayedFreeze from './DelayedFreeze';
 
-export { useThemeValue } from './Provider/hooks/useThemeValue';
+export { useThemeValue, getThemeTokens } from './Provider/hooks/useThemeValue';
 export { useIsMounted } from './Provider/hooks/useIsMounted';
 
 // Navigation
